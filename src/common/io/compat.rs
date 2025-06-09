@@ -1,6 +1,8 @@
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use crate::rt::Stats;
+
 /// This adapts from `hyper` IO traits to the ones in Tokio.
 ///
 /// This is currently used by `h2`, and by hyper internal unit tests.
@@ -16,6 +18,22 @@ impl<T> Compat<T> {
         // SAFETY: The simplest of projections. This is just
         // a wrapper, we don't do anything that would undo the projection.
         unsafe { self.map_unchecked_mut(|me| &mut me.0) }
+    }
+}
+
+impl<T> Stats for Compat<T>
+where
+    T: Stats,
+{
+    fn stats(&mut self) -> crate::rt::ConnectionStats {
+        self.0.stats()
+    }
+}
+
+#[cfg(test)]
+impl Stats for Compat<tokio_test::io::Mock> {
+    fn stats(&mut self) -> crate::rt::ConnectionStats {
+        Default::default()
     }
 }
 

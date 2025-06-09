@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self};
 use std::mem::MaybeUninit;
 use std::ops::DerefMut;
 use std::pin::Pin;
@@ -40,6 +40,37 @@ pub trait Read {
         cx: &mut Context<'_>,
         buf: ReadBufCursor<'_>,
     ) -> Poll<Result<(), std::io::Error>>;
+}
+
+/// Collects connection-level statistics for a connection.
+pub trait Stats {
+    /// Get the connection statistics for this connection.
+    fn stats(&mut self) -> ConnectionStats;
+}
+
+#[derive(Default, Debug, Copy, Clone)]
+/// Connection-level stats for http requests.
+pub struct ConnectionStats {
+    /// The approximate instant we started to process this connection.
+    pub start_time: Option<std::time::Instant>,
+
+    /// The approximate instant before we start dns resolution.
+    pub dns_resolve_start: Option<std::time::Instant>,
+
+    /// The approximate instant after we have finished dns resolution.
+    pub dns_resolve_end: Option<std::time::Instant>,
+
+    /// The approximate instant before we start establishing a TCP connection.
+    pub connect_start: Option<std::time::Instant>,
+
+    /// The approximate instant after we finish establishing a TCP connection.
+    pub connect_end: Option<std::time::Instant>,
+
+    /// The approximate instant before we start upgrading a connection to TLS.
+    pub tls_connect_start: Option<std::time::Instant>,
+
+    /// The approximate instant after we have finished upgrading a connection to TLS.
+    pub tls_connect_end: Option<std::time::Instant>,
 }
 
 /// Write bytes asynchronously.

@@ -4,6 +4,8 @@ use std::io::{self, IoSlice};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use crate::rt::ConnectionStats;
+use crate::rt::Stats;
 use crate::rt::{Read, ReadBuf, Write};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures_core::ready;
@@ -53,7 +55,7 @@ where
 
 impl<T, B> Buffered<T, B>
 where
-    T: Read + Write + Unpin,
+    T: Read + Write + Stats + Unpin,
     B: Buf,
 {
     pub(crate) fn new(io: T) -> Buffered<T, B> {
@@ -81,6 +83,10 @@ where
         if enabled {
             self.set_write_strategy_flatten();
         }
+    }
+
+    pub(crate) fn stats(&mut self) -> ConnectionStats {
+        self.io.stats()
     }
 
     pub(crate) fn set_max_buf_size(&mut self, max: usize) {
@@ -169,12 +175,14 @@ where
 
     pub(super) fn parse<S>(
         &mut self,
+        record_time: bool,
         cx: &mut Context<'_>,
         parse_ctx: ParseContext<'_>,
-    ) -> Poll<crate::Result<ParsedMessage<S::Incoming>>>
+    ) -> Poll<crate::Result<(Option<std::time::Instant>, ParsedMessage<S::Incoming>)>>
     where
         S: Http1Transaction,
     {
+        let mut time = None;
         loop {
             match super::role::parse_headers::<S>(
                 &mut self.read_buf,
@@ -195,7 +203,7 @@ where
                 Some(msg) => {
                     debug!("parsed {} headers", msg.head.headers.len());
                     self.partial_len = None;
-                    return Poll::Ready(Ok(msg));
+                    return Poll::Ready(Ok((time, msg)));
                 }
                 None => {
                     let max = self.read_buf_strategy.max();
@@ -213,14 +221,24 @@ where
                     }
                 }
             }
-            if ready!(self.poll_read_from_io(cx)).map_err(crate::Error::new_io)? == 0 {
+            let (maybe_time, r) = self.poll_read_from_io(record_time, cx);
+            if time.is_none() {
+                // Only set our time if we are None--this ensures that any non-None value we get is "sticky" (in case we
+                // do multiple rounds of this parse as we await complete headers.)
+                time = maybe_time;
+            }
+            if ready!(r).map_err(crate::Error::new_io)? == 0 {
                 trace!("parse eof");
                 return Poll::Ready(Err(crate::Error::new_incomplete()));
             }
         }
     }
 
-    pub(crate) fn poll_read_from_io(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+    pub(crate) fn poll_read_from_io(
+        &mut self,
+        record_time: bool,
+        cx: &mut Context<'_>,
+    ) -> (Option<std::time::Instant>, Poll<io::Result<usize>>) {
         self.read_blocked = false;
         let next = self.read_buf_strategy.next();
         if self.read_buf_remaining_mut() < next {
@@ -233,6 +251,11 @@ where
         let mut buf = ReadBuf::uninit(dst);
         match Pin::new(&mut self.io).poll_read(cx, buf.unfilled()) {
             Poll::Ready(Ok(_)) => {
+                let time = if record_time {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                };
                 let n = buf.filled().len();
                 trace!("received {} bytes", n);
                 unsafe {
@@ -242,13 +265,13 @@ where
                     self.read_buf.advance_mut(n);
                 }
                 self.read_buf_strategy.record(n);
-                Poll::Ready(Ok(n))
+                (time, Poll::Ready(Ok(n)))
             }
             Poll::Pending => {
                 self.read_blocked = true;
-                Poll::Pending
+                (None, Poll::Pending)
             }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Ready(Err(e)) => (None, Poll::Ready(Err(e))),
         }
     }
 
@@ -339,7 +362,7 @@ pub(crate) trait MemRead {
 
 impl<T, B> MemRead for Buffered<T, B>
 where
-    T: Read + Write + Unpin,
+    T: Read + Write + Stats + Unpin,
     B: Buf,
 {
     fn read_mem(&mut self, cx: &mut Context<'_>, len: usize) -> Poll<io::Result<Bytes>> {
@@ -347,7 +370,8 @@ where
             let n = std::cmp::min(len, self.read_buf.len());
             Poll::Ready(Ok(self.read_buf.split_to(n).freeze()))
         } else {
-            let n = ready!(self.poll_read_from_io(cx))?;
+            let (_, r) = self.poll_read_from_io(false, cx);
+            let n = ready!(r)?;
             Poll::Ready(Ok(self.read_buf.split_to(::std::cmp::min(len, n)).freeze()))
         }
     }
@@ -714,7 +738,7 @@ mod tests {
                 on_informational: &mut None,
             };
             assert!(buffered
-                .parse::<ClientTransaction>(cx, parse_ctx)
+                .parse::<ClientTransaction>(false, cx, parse_ctx)
                 .is_pending());
             Poll::Ready(())
         })

@@ -8,7 +8,7 @@ use std::task::{Context, Poll};
 #[cfg(feature = "server")]
 use std::time::{Duration, Instant};
 
-use crate::rt::{Read, Write};
+use crate::rt::{ConnectionStats, Read, Stats, Write};
 use bytes::{Buf, Bytes};
 use futures_core::ready;
 use http::header::{HeaderValue, CONNECTION, TE};
@@ -43,7 +43,7 @@ pub(crate) struct Conn<I, B, T> {
 
 impl<I, B, T> Conn<I, B, T>
 where
-    I: Read + Write + Unpin,
+    I: Read + Write + Stats + Unpin,
     B: Buf,
     T: Http1Transaction,
 {
@@ -109,6 +109,10 @@ where
     #[cfg(feature = "client")]
     pub(crate) fn set_read_buf_exact_size(&mut self, sz: usize) {
         self.io.set_read_buf_exact_size(sz);
+    }
+
+    pub(crate) fn stats(&mut self) -> ConnectionStats {
+        self.io.stats()
     }
 
     pub(crate) fn set_write_strategy_flatten(&mut self) {
@@ -211,7 +215,7 @@ where
     pub(super) fn poll_read_head(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<crate::Result<(MessageHead<T::Incoming>, DecodedLength, Wants)>>> {
+    ) -> Poll<Option<crate::Result<(MessageHead<T::Incoming>, DecodedLength, Wants, Option<std::time::Instant>)>>> {
         debug_assert!(self.can_read_head());
         trace!("Conn::read_head");
 
@@ -234,7 +238,8 @@ where
             }
         }
 
-        let msg = match self.io.parse::<T>(
+        let (fbt, msg) = match self.io.parse::<T>(
+            true,
             cx,
             ParseContext {
                 cached_headers: &mut self.state.cached_headers,
@@ -331,7 +336,7 @@ where
             .get(TE)
             .map_or(false, |te_header| te_header == "trailers");
 
-        Poll::Ready(Some(Ok((msg.head, msg.decode, wants))))
+        Poll::Ready(Some(Ok((msg.head, msg.decode, wants, fbt))))
     }
 
     fn on_read_head_error<Z>(&mut self, e: crate::Error) -> Poll<Option<crate::Result<Z>>> {
@@ -509,7 +514,7 @@ where
     fn force_io_read(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
         debug_assert!(!self.state.is_read_closed());
 
-        let result = ready!(self.io.poll_read_from_io(cx));
+        let result = ready!(self.io.poll_read_from_io(false, cx).1);
         Poll::Ready(result.map_err(|e| {
             trace!(error = %e, "force_io_read; io error");
             self.state.close();
@@ -537,7 +542,7 @@ where
 
         if !self.io.is_read_blocked() {
             if self.io.read_buf().is_empty() {
-                match self.io.poll_read_from_io(cx) {
+                match self.io.poll_read_from_io(false, cx).1 {
                     Poll::Ready(Ok(n)) => {
                         if n == 0 {
                             trace!("maybe_notify; read eof");
