@@ -6,7 +6,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::rt::{Read, Write};
+use crate::rt::{ConnectionStats, Read, Stats, Write};
+use crate::RequestStats;
 use bytes::{Buf, Bytes};
 use futures_core::ready;
 use http::Request;
@@ -36,8 +37,15 @@ pub(crate) trait Dispatch {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<(Self::PollItem, Self::PollBody), Self::PollError>>>;
-    fn recv_msg(&mut self, msg: crate::Result<(Self::RecvItem, IncomingBody)>)
-        -> crate::Result<()>;
+    fn recv_msg(
+        &mut self,
+        msg: crate::Result<(
+            ConnectionStats,
+            Option<std::time::Instant>,
+            Self::RecvItem,
+            IncomingBody,
+        )>,
+    ) -> crate::Result<()>;
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ()>>;
     fn should_poll(&self) -> bool;
 }
@@ -54,14 +62,14 @@ cfg_server! {
 cfg_client! {
     pin_project_lite::pin_project! {
         pub(crate) struct Client<B> {
-            callback: Option<crate::client::dispatch::Callback<Request<B>, http::Response<IncomingBody>>>,
+            callback: Option<crate::client::dispatch::Callback<Request<B>, (RequestStats, http::Response<IncomingBody>)>>,
             #[pin]
             rx: ClientRx<B>,
             rx_closed: bool,
         }
     }
 
-    type ClientRx<B> = crate::client::dispatch::Receiver<Request<B>, http::Response<IncomingBody>>;
+    type ClientRx<B> = crate::client::dispatch::Receiver<Request<B>, (RequestStats, http::Response<IncomingBody>)>;
 }
 
 impl<D, Bs, I, T> Dispatcher<D, Bs, I, T>
@@ -72,7 +80,7 @@ where
             RecvItem = MessageHead<T::Incoming>,
         > + Unpin,
     D::PollError: Into<Box<dyn StdError + Send + Sync>>,
-    I: Read + Write + Unpin,
+    I: Read + Write + Stats + Unpin,
     T: Http1Transaction + Unpin,
     Bs: Body + 'static,
     Bs::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -281,7 +289,7 @@ where
 
         // dispatch is ready for a message, try to read one
         match ready!(self.conn.poll_read_head(cx)) {
-            Some(Ok((mut head, body_len, wants))) => {
+            Some(Ok((mut head, body_len, wants, fbt))) => {
                 let body = match body_len {
                     DecodedLength::ZERO => IncomingBody::empty(),
                     other => {
@@ -300,7 +308,8 @@ where
                     );
                     head.extensions.insert(upgrade);
                 }
-                self.dispatch.recv_msg(Ok((head, body)))?;
+                self.dispatch
+                    .recv_msg(Ok((self.conn.stats(), fbt, head, body)))?;
                 Poll::Ready(Ok(()))
             }
             Some(Err(err)) => {
@@ -459,7 +468,7 @@ where
             RecvItem = MessageHead<T::Incoming>,
         > + Unpin,
     D::PollError: Into<Box<dyn StdError + Send + Sync>>,
-    I: Read + Write + Unpin,
+    I: Read + Write + Stats + Unpin,
     T: Http1Transaction + Unpin,
     Bs: Body + 'static,
     Bs::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -553,8 +562,8 @@ cfg_server! {
             ret
         }
 
-        fn recv_msg(&mut self, msg: crate::Result<(Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
-            let (msg, body) = msg?;
+        fn recv_msg(&mut self, msg: crate::Result<(ConnectionStats, Option<std::time::Instant>, Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
+            let (_stats, _fbt, msg, body) = msg?;
             let mut req = Request::new(body);
             *req.method_mut() = msg.subject.0;
             *req.uri_mut() = msg.subject.1;
@@ -641,12 +650,18 @@ cfg_client! {
             }
         }
 
-        fn recv_msg(&mut self, msg: crate::Result<(Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
+        fn recv_msg(&mut self, msg: crate::Result<(ConnectionStats, Option<std::time::Instant>, Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
             match msg {
-                Ok((msg, body)) => {
+                Ok((stats, fbt, msg, body)) => {
                     if let Some(cb) = self.callback.take() {
                         let res = msg.into_response(body);
-                        cb.send(Ok(res));
+                        cb.send(Ok((RequestStats {
+                            connection_stats: stats,
+                            fbt,
+                            last_redirect: None,
+                            finish: None,
+                            poll_start: std::time::Instant::now(),
+                        }, res)));
                         Ok(())
                     } else {
                         // Getting here is likely a bug! An error should have happened

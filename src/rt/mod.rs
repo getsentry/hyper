@@ -11,7 +11,7 @@ pub mod bounds;
 mod io;
 mod timer;
 
-pub use self::io::{Read, ReadBuf, ReadBufCursor, Write};
+pub use self::io::{ConnectionStats, Read, ReadBuf, ReadBufCursor, Stats, Write};
 pub use self::timer::{Sleep, Timer};
 
 /// An executor of futures.

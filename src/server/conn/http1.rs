@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use crate::rt::{Read, Write};
+use crate::rt::{Read, Stats, Write};
 use crate::upgrade::Upgraded;
 use bytes::Bytes;
 use futures_core::ready;
@@ -120,7 +120,7 @@ impl<I, B, S> Connection<I, S>
 where
     S: HttpService<IncomingBody, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    I: Read + Write + Unpin,
+    I: Read + Write + Stats + Unpin,
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
@@ -200,7 +200,7 @@ impl<I, B, S> Future for Connection<I, S>
 where
     S: HttpService<IncomingBody, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    I: Read + Write + Unpin,
+    I: Read + Write + Stats + Unpin,
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
@@ -438,7 +438,7 @@ impl Builder {
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
         S::ResBody: 'static,
         <S::ResBody as Body>::Error: Into<Box<dyn StdError + Send + Sync>>,
-        I: Read + Write + Unpin,
+        I: Read + Write + Stats + Unpin,
     {
         let mut conn = proto::Conn::new(io);
         conn.set_h1_parser_config(self.h1_parser_config.clone());
@@ -498,7 +498,7 @@ impl<I, B, S> UpgradeableConnection<I, S>
 where
     S: HttpService<IncomingBody, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    I: Read + Write + Unpin,
+    I: Read + Write + Stats + Unpin,
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
@@ -519,7 +519,7 @@ impl<I, B, S> Future for UpgradeableConnection<I, S>
 where
     S: HttpService<IncomingBody, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    I: Read + Write + Unpin + Send + 'static,
+    I: Read + Write + Stats + Unpin + Send + 'static,
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
