@@ -85,7 +85,7 @@ where
         }
     }
 
-    pub(crate) fn stats(&mut self) -> ConnectionStats {
+    pub(crate) fn connection_stats(&mut self) -> Option<ConnectionStats> {
         self.io.stats()
     }
 
@@ -182,7 +182,7 @@ where
     where
         S: Http1Transaction,
     {
-        let mut time = None;
+        let mut fbt = None;
         loop {
             match super::role::parse_headers::<S>(
                 &mut self.read_buf,
@@ -203,7 +203,7 @@ where
                 Some(msg) => {
                     debug!("parsed {} headers", msg.head.headers.len());
                     self.partial_len = None;
-                    return Poll::Ready(Ok((time, msg)));
+                    return Poll::Ready(Ok((fbt, msg)));
                 }
                 None => {
                     let max = self.read_buf_strategy.max();
@@ -222,10 +222,10 @@ where
                 }
             }
             let (maybe_time, r) = self.poll_read_from_io(record_time, cx);
-            if time.is_none() {
+            if fbt.is_none() {
                 // Only set our time if we are None--this ensures that any non-None value we get is "sticky" (in case we
                 // do multiple rounds of this parse as we await complete headers.)
-                time = maybe_time;
+                fbt = maybe_time;
             }
             if ready!(r).map_err(crate::Error::new_io)? == 0 {
                 trace!("parse eof");

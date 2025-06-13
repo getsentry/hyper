@@ -99,6 +99,12 @@ impl<T> TokioIo<T> {
     }
 }
 
+impl<T> hyper::rt::Stats for TokioIo<T> {
+    fn stats(&mut self) -> Option<hyper::rt::ConnectionStats> {
+        None
+    }
+}
+
 impl<T> hyper::rt::Read for TokioIo<T>
 where
     T: tokio::io::AsyncRead,

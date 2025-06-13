@@ -18,11 +18,11 @@ use crate::body::{Body, Incoming as IncomingBody};
 use crate::common::time::Time;
 use crate::rt::bounds::Http2ClientConnExec;
 use crate::rt::Timer;
-use crate::{proto, RequestStats};
+use crate::{proto, HttpConnectionStats};
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {
-    dispatch: dispatch::UnboundedSender<Request<B>, (RequestStats, Response<IncomingBody>)>,
+    dispatch: dispatch::UnboundedSender<Request<B>, (HttpConnectionStats, Response<IncomingBody>)>,
 }
 
 impl<B> Clone for SendRequest<B> {
@@ -134,7 +134,7 @@ where
     pub fn send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = crate::Result<(RequestStats, Response<IncomingBody>)>> {
+    ) -> impl Future<Output = crate::Result<(HttpConnectionStats, Response<IncomingBody>)>> {
         let sent = self.dispatch.send(req);
 
         async move {
@@ -165,7 +165,7 @@ where
     pub fn try_send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = Result<(RequestStats, Response<IncomingBody>), TrySendError<Request<B>>>>
+    ) -> impl Future<Output = Result<(HttpConnectionStats, Response<IncomingBody>), TrySendError<Request<B>>>>
     {
         let sent = self.dispatch.try_send(req);
         async move {

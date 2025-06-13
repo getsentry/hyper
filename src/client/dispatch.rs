@@ -11,7 +11,7 @@ use pin_project_lite::pin_project;
 use tokio::sync::{mpsc, oneshot};
 
 #[cfg(feature = "http2")]
-use crate::{body::Incoming, proto::h2::client::ResponseFutMap, RequestStats};
+use crate::{body::Incoming, proto::h2::client::ResponseFutMap, HttpConnectionStats};
 
 pub(crate) type RetryPromise<T, U> = oneshot::Receiver<Result<U, TrySendError<T>>>;
 pub(crate) type Promise<T> = oneshot::Receiver<Result<T, crate::Error>>;
@@ -333,7 +333,7 @@ pin_project! {
         #[pin]
         pub(crate) when: ResponseFutMap<B>,
         #[pin]
-        pub(crate) call_back: Option<Callback<Request<B>, (RequestStats, Response<Incoming>)>>,
+        pub(crate) call_back: Option<Callback<Request<B>, (HttpConnectionStats, Response<Incoming>)>>,
     }
 }
 

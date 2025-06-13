@@ -44,7 +44,7 @@ async fn client_request_response() -> Result<Response<BoxBody>> {
         }
     });
 
-    let web_res = sender.send_request(req).await?;
+    let web_res = sender.send_request(req).await?.1;
 
     let res_body = web_res.into_body().boxed();
 

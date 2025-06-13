@@ -1,6 +1,6 @@
 use std::fmt::{self};
 use std::mem::MaybeUninit;
-use std::ops::DerefMut;
+use std::ops::{DerefMut, Sub};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -45,7 +45,7 @@ pub trait Read {
 /// Collects connection-level statistics for a connection.
 pub trait Stats {
     /// Get the connection statistics for this connection.
-    fn stats(&mut self) -> ConnectionStats;
+    fn stats(&mut self) -> Option<ConnectionStats>;
 }
 
 #[derive(Default, Debug, Copy, Clone)]
@@ -71,6 +71,68 @@ pub struct ConnectionStats {
 
     /// The approximate instant after we have finished upgrading a connection to TLS.
     pub tls_connect_end: Option<std::time::Instant>,
+}
+
+impl fmt::Display for ConnectionStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(s) = self.get_dns_resolve_start() {
+            if let Some(e) = self.get_dns_resolve_end() {
+                f.write_fmt(format_args!("name resolution: {:?}\n", e.sub(s)))?;
+            }
+        }
+
+        if let Some(s) = self.get_connect_start() {
+            if let Some(e) = self.get_connect_end() {
+                f.write_fmt(format_args!("connection: {:?}\n", e.sub(s)))?;
+            }
+        }
+
+        if let Some(s) = self.get_tls_start() {
+            if let Some(e) = self.get_tls_end() {
+                f.write_fmt(format_args!("tls negotiation: {:?}\n", e.sub(s)))?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl ConnectionStats {
+    /// Returns the time the dns resolve started
+    pub fn get_dns_resolve_start(&self) -> Option<core::time::Duration> {
+        self.dns_resolve_start
+            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
+    }
+
+    /// Returns the time the dns resolve finished
+    pub fn get_dns_resolve_end(&self) -> Option<core::time::Duration> {
+        self.dns_resolve_end
+            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
+    }
+
+    /// Returns the time the socket connection was started
+    pub fn get_connect_start(&self) -> Option<core::time::Duration> {
+        self.connect_start
+            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
+    }
+
+    /// Returns the time the socket finished connecting
+    pub fn get_connect_end(&self) -> Option<core::time::Duration> {
+        self.connect_end
+            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
+    }
+
+    /// Returns the time the tls negotiation started
+    pub fn get_tls_start(&self) -> Option<core::time::Duration> {
+        self.tls_connect_start
+            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
+    }
+
+    /// Returns the time the tls negotiation completed
+    pub fn get_tls_end(&self) -> Option<core::time::Duration> {
+        self.tls_connect_end
+            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
+    }
 }
 
 /// Write bytes asynchronously.

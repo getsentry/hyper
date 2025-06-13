@@ -50,7 +50,7 @@ async fn fetch_json(url: hyper::Uri) -> Result<Vec<User>> {
         .header(hyper::header::HOST, authority.as_str())
         .body(Empty::<Bytes>::new())?;
 
-    let res = sender.send_request(req).await?;
+    let res = sender.send_request(req).await?.1;
 
     // asynchronously aggregate the chunks of the body
     let body = res.collect().await?.aggregate();

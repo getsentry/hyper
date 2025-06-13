@@ -14,14 +14,14 @@ use httparse::ParserConfig;
 
 use super::super::dispatch::{self, TrySendError};
 use crate::body::{Body, Incoming as IncomingBody};
-use crate::{proto, RequestStats};
+use crate::{proto, HttpConnectionStats};
 
 type Dispatcher<T, B> =
     proto::dispatch::Dispatcher<proto::dispatch::Client<B>, B, T, proto::h1::ClientTransaction>;
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {
-    dispatch: dispatch::Sender<Request<B>, (RequestStats, Response<IncomingBody>)>,
+    dispatch: dispatch::Sender<Request<B>, (HttpConnectionStats, Response<IncomingBody>)>,
 }
 
 /// Deconstructed parts of a `Connection`.
@@ -191,7 +191,7 @@ where
     pub fn send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = crate::Result<(RequestStats, Response<IncomingBody>)>> {
+    ) -> impl Future<Output = crate::Result<(HttpConnectionStats, Response<IncomingBody>)>> {
         let sent = self.dispatch.send(req);
 
         async move {
@@ -221,8 +221,9 @@ where
     pub fn try_send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = Result<(RequestStats, Response<IncomingBody>), TrySendError<Request<B>>>>
-    {
+    ) -> impl Future<
+        Output = Result<(HttpConnectionStats, Response<IncomingBody>), TrySendError<Request<B>>>,
+    > {
         let sent = self.dispatch.try_send(req);
         async move {
             match sent {

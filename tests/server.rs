@@ -20,8 +20,8 @@ use h2::client::SendRequest;
 use h2::{RecvStream, SendStream};
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full, StreamBody};
-use hyper::rt::Timer;
 use hyper::rt::{Read as AsyncRead, Write as AsyncWrite};
+use hyper::rt::{Stats, Timer};
 use support::{TokioExecutor, TokioIo, TokioTimer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener as TkTcpListener, TcpListener, TcpStream as TkTcpStream};
@@ -2693,7 +2693,11 @@ async fn http2_check_date_header_disabled() {
     TokioTimer.sleep(Duration::from_secs(4)).await;
 
     let req = http::Request::new(Empty::<Bytes>::new());
-    let resp = client.send_request(req).await.expect("client.send_request");
+    let resp = client
+        .send_request(req)
+        .await
+        .expect("client.send_request")
+        .1;
 
     assert!(resp.headers().get("Date").is_none());
 }
@@ -3353,6 +3357,12 @@ struct DebugStream<T, D> {
 
 impl<T: Unpin, D> Unpin for DebugStream<T, D> {}
 
+impl<T, D> Stats for DebugStream<T, D> {
+    fn stats(&mut self) -> Option<hyper::rt::ConnectionStats> {
+        None
+    }
+}
+
 impl<T: Read, D> Read for DebugStream<T, D> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.stream.read(buf)
@@ -3466,7 +3476,7 @@ impl TestClient {
                 conn.await.unwrap();
             });
 
-            sender.send_request(req).await
+            sender.send_request(req).await.map(|(_, resp)| resp)
         } else {
             let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
                 .handshake(stream)
@@ -3476,7 +3486,7 @@ impl TestClient {
                 conn.await.unwrap();
             });
 
-            sender.send_request(req).await
+            sender.send_request(req).await.map(|(_, resp)| resp)
         }
     }
 }

@@ -106,7 +106,7 @@ async fn proxy(
             }
         });
 
-        let resp = sender.send_request(req).await?;
+        let resp = sender.send_request(req).await?.1;
         Ok(resp.map(|b| b.boxed()))
     }
 }

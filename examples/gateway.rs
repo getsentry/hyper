@@ -56,7 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 });
 
-                sender.send_request(req).await
+                let (_, res) = sender.send_request(req).await?;
+                Ok::<http::Response<hyper::body::Incoming>, hyper::Error>(res)
             }
         });
 

@@ -377,7 +377,7 @@ impl Opts {
                 }
             };
             async {
-                let res = fut.await.expect("client wait");
+                let res = fut.await.expect("client wait").1;
                 let mut body = res.into_body();
                 while let Some(_chunk) = body.frame().await {}
             }

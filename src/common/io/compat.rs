@@ -25,15 +25,15 @@ impl<T> Stats for Compat<T>
 where
     T: Stats,
 {
-    fn stats(&mut self) -> crate::rt::ConnectionStats {
+    fn stats(&mut self) -> Option<crate::rt::ConnectionStats> {
         self.0.stats()
     }
 }
 
 #[cfg(test)]
 impl Stats for Compat<tokio_test::io::Mock> {
-    fn stats(&mut self) -> crate::rt::ConnectionStats {
-        Default::default()
+    fn stats(&mut self) -> Option<crate::rt::ConnectionStats> {
+        None
     }
 }
 
