@@ -352,7 +352,7 @@ macro_rules! test {
             }
             *req.uri_mut() = builder.build().unwrap();
 
-            let mut resp = sender.send_request(req).await?;
+            let mut resp = sender.send_request(req).await?.1;
 
             resp.extensions_mut().insert(extra);
             Ok(resp)
@@ -1562,7 +1562,7 @@ mod conn {
                 .uri("/a")
                 .body(Empty::<Bytes>::new())
                 .unwrap();
-            let mut res = client.send_request(req).await.expect("send_request");
+            let mut res = client.send_request(req).await.expect("send_request").1;
             assert_eq!(res.status(), hyper::StatusCode::OK);
             assert!(res.body_mut().frame().await.is_none());
         };
@@ -1602,7 +1602,7 @@ mod conn {
                 .uri("/a")
                 .body(Empty::<Bytes>::new())
                 .unwrap();
-            let mut res = client.send_request(req).await.expect("send_request");
+            let mut res = client.send_request(req).await.expect("send_request").1;
             assert_eq!(res.status(), hyper::StatusCode::OK);
             assert_eq!(
                 res.extensions()
@@ -1655,7 +1655,7 @@ mod conn {
             .uri("/")
             .body(Empty::<Bytes>::new())
             .unwrap();
-        let res = client.send_request(req).and_then(move |mut res| {
+        let res = client.send_request(req).and_then(move |(_, mut res)| {
             assert_eq!(res.status(), hyper::StatusCode::OK);
             assert_eq!(res.body().size_hint().exact(), Some(5));
             assert!(!res.body().is_end_stream());
@@ -1760,7 +1760,7 @@ mod conn {
             .body(Empty::<Bytes>::new())
             .unwrap();
 
-        let res = client.send_request(req).and_then(move |res| {
+        let res = client.send_request(req).and_then(move |(_, res)| {
             assert_eq!(res.status(), hyper::StatusCode::OK);
             concat(res)
         });
@@ -1805,7 +1805,7 @@ mod conn {
             .body(Empty::<Bytes>::new())
             .unwrap();
 
-        let res = client.send_request(req).and_then(move |res| {
+        let res = client.send_request(req).and_then(move |(_, res)| {
             assert_eq!(res.status(), hyper::StatusCode::OK);
             concat(res)
         });
@@ -1844,7 +1844,7 @@ mod conn {
             .uri("/a")
             .body(Empty::<Bytes>::new())
             .unwrap();
-        let res1 = client.send_request(req).and_then(move |res| {
+        let res1 = client.send_request(req).and_then(move |(_, res)| {
             assert_eq!(res.status(), hyper::StatusCode::OK);
             concat(res)
         });
@@ -1912,7 +1912,7 @@ mod conn {
                 .uri("/a")
                 .body(Empty::<Bytes>::new())
                 .unwrap();
-            let res = client.send_request(req).and_then(move |res| {
+            let res = client.send_request(req).and_then(move |(_, res)| {
                 assert_eq!(res.status(), hyper::StatusCode::SWITCHING_PROTOCOLS);
                 assert_eq!(res.headers()["Upgrade"], "foobar");
                 concat(res)
@@ -1999,7 +1999,7 @@ mod conn {
                 .unwrap();
             let res = client
                 .send_request(req)
-                .and_then(move |res| {
+                .and_then(move |(_, res)| {
                     assert_eq!(res.status(), hyper::StatusCode::OK);
                     concat(res)
                 })
@@ -2362,7 +2362,7 @@ mod conn {
                 .body(Empty::<Bytes>::new())
                 .expect("request builder");
 
-            let resp = client.send_request(req).await.expect("req1 send");
+            let resp = client.send_request(req).await.expect("req1 send").1;
             assert_eq!(resp.status(), 200);
             let upgrade = hyper::upgrade::on(resp).await.unwrap();
             tokio::task::spawn(async move {
@@ -2582,7 +2582,7 @@ mod conn {
         // Use a channel to keep request stream open
         let (_tx, recv) = mpsc::channel::<Result<Frame<Bytes>, Box<dyn Error + Send + Sync>>>(0);
         let req = Request::post("/a").body(StreamBody::new(recv)).unwrap();
-        let resp = client.send_request(req).await.expect("send_request");
+        let resp = client.send_request(req).await.expect("send_request").1;
         assert!(resp.status().is_success());
 
         let mut body = String::new();
@@ -2637,7 +2637,7 @@ mod conn {
         let req = Request::connect("localhost")
             .body(Empty::<Bytes>::new())
             .unwrap();
-        let res = client.send_request(req).await.expect("send_request");
+        let res = client.send_request(req).await.expect("send_request").1;
         assert_eq!(res.status(), StatusCode::OK);
 
         let mut upgraded = TokioIo::new(hyper::upgrade::on(res).await.unwrap());
@@ -2685,7 +2685,7 @@ mod conn {
         });
 
         let req = Request::connect("localhost").body(Empty::new()).unwrap();
-        let res = client.send_request(req).await.expect("send_request");
+        let res = client.send_request(req).await.expect("send_request").1;
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         assert!(res.extensions().get::<OnUpgrade>().is_none());
 
@@ -2748,6 +2748,12 @@ mod conn {
     struct DebugStream {
         tcp: TokioIo<TcpStream>,
         shutdown_called: bool,
+    }
+
+    impl hyper::rt::Stats for DebugStream {
+        fn stats(&mut self) -> Option<hyper::rt::ConnectionStats> {
+            None
+        }
     }
 
     impl hyper::rt::Write for DebugStream {

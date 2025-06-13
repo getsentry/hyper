@@ -6,8 +6,10 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::rt::{ConnectionStats, Read, Stats, Write};
-use crate::RequestStats;
+use crate::{
+    rt::{Read, Stats, Write},
+    HttpConnectionStats,
+};
 use bytes::{Buf, Bytes};
 use futures_core::ready;
 use http::Request;
@@ -39,12 +41,7 @@ pub(crate) trait Dispatch {
     ) -> Poll<Option<Result<(Self::PollItem, Self::PollBody), Self::PollError>>>;
     fn recv_msg(
         &mut self,
-        msg: crate::Result<(
-            ConnectionStats,
-            Option<std::time::Instant>,
-            Self::RecvItem,
-            IncomingBody,
-        )>,
+        msg: crate::Result<(HttpConnectionStats, Self::RecvItem, IncomingBody)>,
     ) -> crate::Result<()>;
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ()>>;
     fn should_poll(&self) -> bool;
@@ -62,14 +59,14 @@ cfg_server! {
 cfg_client! {
     pin_project_lite::pin_project! {
         pub(crate) struct Client<B> {
-            callback: Option<crate::client::dispatch::Callback<Request<B>, (RequestStats, http::Response<IncomingBody>)>>,
+            callback: Option<crate::client::dispatch::Callback<Request<B>, (HttpConnectionStats, http::Response<IncomingBody>)>>,
             #[pin]
             rx: ClientRx<B>,
             rx_closed: bool,
         }
     }
 
-    type ClientRx<B> = crate::client::dispatch::Receiver<Request<B>, (RequestStats, http::Response<IncomingBody>)>;
+    type ClientRx<B> = crate::client::dispatch::Receiver<Request<B>, (HttpConnectionStats, http::Response<IncomingBody>)>;
 }
 
 impl<D, Bs, I, T> Dispatcher<D, Bs, I, T>
@@ -289,7 +286,7 @@ where
 
         // dispatch is ready for a message, try to read one
         match ready!(self.conn.poll_read_head(cx)) {
-            Some(Ok((mut head, body_len, wants, fbt))) => {
+            Some(Ok((mut head, body_len, wants))) => {
                 let body = match body_len {
                     DecodedLength::ZERO => IncomingBody::empty(),
                     other => {
@@ -309,7 +306,7 @@ where
                     head.extensions.insert(upgrade);
                 }
                 self.dispatch
-                    .recv_msg(Ok((self.conn.stats(), fbt, head, body)))?;
+                    .recv_msg(Ok((self.conn.http_connection_stats(), head, body)))?;
                 Poll::Ready(Ok(()))
             }
             Some(Err(err)) => {
@@ -562,8 +559,8 @@ cfg_server! {
             ret
         }
 
-        fn recv_msg(&mut self, msg: crate::Result<(ConnectionStats, Option<std::time::Instant>, Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
-            let (_stats, _fbt, msg, body) = msg?;
+        fn recv_msg(&mut self, msg: crate::Result<(HttpConnectionStats, Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
+            let (_stats, msg, body) = msg?;
             let mut req = Request::new(body);
             *req.method_mut() = msg.subject.0;
             *req.uri_mut() = msg.subject.1;
@@ -650,18 +647,12 @@ cfg_client! {
             }
         }
 
-        fn recv_msg(&mut self, msg: crate::Result<(ConnectionStats, Option<std::time::Instant>, Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
+        fn recv_msg(&mut self, msg: crate::Result<(HttpConnectionStats, Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
             match msg {
-                Ok((stats, fbt, msg, body)) => {
+                Ok((stats, msg, body)) => {
                     if let Some(cb) = self.callback.take() {
                         let res = msg.into_response(body);
-                        cb.send(Ok((RequestStats {
-                            connection_stats: stats,
-                            fbt,
-                            last_redirect: None,
-                            finish: None,
-                            poll_start: std::time::Instant::now(),
-                        }, res)));
+                        cb.send(Ok((stats, res)));
                         Ok(())
                     } else {
                         // Getting here is likely a bug! An error should have happened

@@ -455,7 +455,8 @@ async fn async_test(cfg: __TestConfig) {
                     }
                 });
                 sender.send_request(req).await.unwrap()
-            };
+            }
+            .1;
 
             assert_eq!(res.status(), cstatus, "server status");
             assert_eq!(res.version(), version, "server version");
@@ -556,7 +557,8 @@ async fn naive_proxy(cfg: ProxyConfig) -> (SocketAddr, impl Future<Output = ()>)
                             });
 
                             sender.send_request(req).await?
-                        };
+                        }
+                        .1;
 
                         let (mut parts, body) = resp.into_parts();
 

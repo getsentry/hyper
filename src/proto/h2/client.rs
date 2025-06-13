@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     rt::{Read, Stats, Write},
-    RequestStats,
+    HttpConnectionStats,
 };
 use bytes::Bytes;
 use futures_channel::mpsc::{Receiver, Sender};
@@ -37,7 +37,7 @@ use crate::{Request, Response};
 use h2::client::ResponseFuture;
 
 type ClientRx<B> =
-    crate::client::dispatch::Receiver<Request<B>, (RequestStats, Response<IncomingBody>)>;
+    crate::client::dispatch::Receiver<Request<B>, (HttpConnectionStats, Response<IncomingBody>)>;
 
 ///// An mpsc channel is used to help notify the `Connection` task when *all*
 ///// other handles to it have been dropped, so that it can shutdown.
@@ -416,7 +416,7 @@ where
     fut: ResponseFuture,
     body_tx: SendStream<SendBuf<B::Data>>,
     body: B,
-    cb: Callback<Request<B>, (RequestStats, Response<IncomingBody>)>,
+    cb: Callback<Request<B>, (HttpConnectionStats, Response<IncomingBody>)>,
 }
 
 impl<B: Body> Unpin for FutCtx<B> {}
@@ -562,8 +562,10 @@ impl<B> Future for ResponseFutMap<B>
 where
     B: Body + 'static,
 {
-    type Output =
-        Result<(RequestStats, Response<crate::body::Incoming>), (crate::Error, Option<Request<B>>)>;
+    type Output = Result<
+        (HttpConnectionStats, Response<crate::body::Incoming>),
+        (crate::Error, Option<Request<B>>),
+    >;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
@@ -605,7 +607,7 @@ where
                     res.extensions_mut().insert(on_upgrade);
 
                     // TODO: to support request stats, we'll need to fork/hack the h2 crate
-                    Poll::Ready(Ok((RequestStats::new_http2(), res)))
+                    Poll::Ready(Ok((HttpConnectionStats::new_http2(), res)))
                 } else {
                     let res = res.map(|stream| {
                         let ping = ping.for_stream(&stream);
@@ -613,7 +615,7 @@ where
                     });
 
                     // TODO: to support request stats, we'll need to fork/hack the h2 crate
-                    Poll::Ready(Ok((RequestStats::new_http2(), res)))
+                    Poll::Ready(Ok((HttpConnectionStats::new_http2(), res)))
                 }
             }
             Err(err) => {

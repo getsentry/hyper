@@ -8,7 +8,7 @@ use std::task::{Context, Poll};
 #[cfg(feature = "server")]
 use std::time::{Duration, Instant};
 
-use crate::rt::{ConnectionStats, Read, Stats, Write};
+use crate::rt::{Read, Stats, Write};
 use bytes::{Buf, Bytes};
 use futures_core::ready;
 use http::header::{HeaderValue, CONNECTION, TE};
@@ -21,10 +21,10 @@ use super::{Decoder, Encode, EncodedBuf, Encoder, Http1Transaction, ParseContext
 use crate::body::DecodedLength;
 #[cfg(feature = "server")]
 use crate::common::time::Time;
-use crate::headers;
 use crate::proto::{BodyLength, MessageHead};
 #[cfg(feature = "server")]
 use crate::rt::Sleep;
+use crate::{headers, HttpConnectionStats};
 
 const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
@@ -39,6 +39,9 @@ pub(crate) struct Conn<I, B, T> {
     io: Buffered<I, EncodedBuf<B>>,
     state: State,
     _marker: PhantomData<fn(T)>,
+
+    first_header_byte_time: Option<std::time::Instant>,
+    first_body_byte_time: Option<std::time::Instant>,
 }
 
 impl<I, B, T> Conn<I, B, T>
@@ -84,6 +87,8 @@ where
                 version: Version::HTTP_11,
                 allow_trailer_fields: false,
             },
+            first_body_byte_time: None,
+            first_header_byte_time: None,
             _marker: PhantomData,
         }
     }
@@ -111,8 +116,20 @@ where
         self.io.set_read_buf_exact_size(sz);
     }
 
-    pub(crate) fn stats(&mut self) -> ConnectionStats {
-        self.io.stats()
+    pub(crate) fn http_connection_stats(&mut self) -> HttpConnectionStats {
+        HttpConnectionStats {
+            connection_stats: self.io.connection_stats(),
+            first_body_byte_time: self.first_body_byte_time,
+            first_header_byte_time: self.first_header_byte_time,
+        }
+    }
+
+    pub(crate) fn set_first_byte_of_body(&mut self, time: Option<std::time::Instant>) {
+        self.first_body_byte_time = time;
+    }
+
+    pub(crate) fn set_first_byte_of_header(&mut self, time: Option<std::time::Instant>) {
+        self.first_header_byte_time = time;
     }
 
     pub(crate) fn set_write_strategy_flatten(&mut self) {
@@ -215,7 +232,7 @@ where
     pub(super) fn poll_read_head(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<crate::Result<(MessageHead<T::Incoming>, DecodedLength, Wants, Option<std::time::Instant>)>>> {
+    ) -> Poll<Option<crate::Result<(MessageHead<T::Incoming>, DecodedLength, Wants)>>> {
         debug_assert!(self.can_read_head());
         trace!("Conn::read_head");
 
@@ -336,7 +353,8 @@ where
             .get(TE)
             .map_or(false, |te_header| te_header == "trailers");
 
-        Poll::Ready(Some(Ok((msg.head, msg.decode, wants, fbt))))
+        self.set_first_byte_of_header(fbt);
+        Poll::Ready(Some(Ok((msg.head, msg.decode, wants))))
     }
 
     fn on_read_head_error<Z>(&mut self, e: crate::Error) -> Poll<Option<crate::Result<Z>>> {
@@ -371,10 +389,11 @@ where
     ) -> Poll<Option<io::Result<Frame<Bytes>>>> {
         debug_assert!(self.can_read_body());
 
-        let (reading, ret) = match self.state.reading {
+        let (reading, ret, fbt) = match self.state.reading {
             Reading::Body(ref mut decoder) => {
                 match ready!(decoder.decode(cx, &mut self.io)) {
                     Ok(frame) => {
+                        let fbt = std::time::Instant::now();
                         if frame.is_data() {
                             let slice = frame.data_ref().unwrap_or_else(|| unreachable!());
                             let (reading, maybe_frame) = if decoder.is_eof() {
@@ -394,19 +413,20 @@ where
                                 // an empty slice...
                                 (Reading::Closed, None)
                             } else {
+                                self.set_first_byte_of_body(Some(fbt));
                                 return Poll::Ready(Some(Ok(frame)));
                             };
-                            (reading, Poll::Ready(maybe_frame))
+                            (reading, Poll::Ready(maybe_frame), Some(fbt))
                         } else if frame.is_trailers() {
-                            (Reading::Closed, Poll::Ready(Some(Ok(frame))))
+                            (Reading::Closed, Poll::Ready(Some(Ok(frame))), Some(fbt))
                         } else {
                             trace!("discarding unknown frame");
-                            (Reading::Closed, Poll::Ready(None))
+                            (Reading::Closed, Poll::Ready(None), Some(fbt))
                         }
                     }
                     Err(e) => {
                         debug!("incoming body decode error: {}", e);
-                        (Reading::Closed, Poll::Ready(Some(Err(e))))
+                        (Reading::Closed, Poll::Ready(Some(Err(e))), None)
                     }
                 }
             }
@@ -425,6 +445,7 @@ where
             _ => unreachable!("poll_read_body invalid state: {:?}", self.state.reading),
         };
 
+        self.set_first_byte_of_body(fbt);
         self.state.reading = reading;
         self.try_keep_alive(cx);
         ret

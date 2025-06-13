@@ -90,7 +90,7 @@
 //!   behavior, for the purposes of protection. It is also possible to _change_
 //!   what the default options are set to, also in efforts to protect the
 //!   most people possible.
-use std::{fmt::Display, ops::Sub};
+use std::fmt::Display;
 
 #[doc(hidden)]
 pub use http;
@@ -105,182 +105,165 @@ pub use crate::error::{Error, Result};
 use crate::rt::ConnectionStats;
 
 #[derive(Clone, Copy, Debug)]
-/// Connection and request-level stats for a http request.
-pub struct RequestStats {
-    /// Connection-level stats.
-    connection_stats: ConnectionStats,
+/// Http-related request stats (including connection stats)
+pub struct HttpConnectionStats {
+    /// The approximate instant the first body byte was received.
+    pub first_body_byte_time: Option<std::time::Instant>,
 
-    /// The apprximate instant that we started waiting for actual bytes on the connection.
-    poll_start: std::time::Instant,
+    /// The approximate instant the first header byte was received.
+    pub first_header_byte_time: Option<std::time::Instant>,
 
-    /// The approximate instant the first byte of the response payload was received.
-    fbt: Option<std::time::Instant>,
-
-    /// The approximate instant we started the very last redirect this request experienced.
-    last_redirect: Option<std::time::Instant>,
-
-    /// The approximate instant we delivered the response to the caller.
-    finish: Option<std::time::Instant>,
+    /// The connection stats for this http request (if the connection was
+    /// not pooled.)
+    pub connection_stats: Option<ConnectionStats>,
 }
 
-impl RequestStats {
+impl HttpConnectionStats {
     /// Constructs a mostly-empty RequestStats struct, with an instantaneous connection time.  
     /// We can use that to figure out how many http2 requests we are making.
     pub fn new_http2() -> Self {
         let now = std::time::Instant::now();
         Self {
-            connection_stats: ConnectionStats {
+            connection_stats: Some(ConnectionStats {
                 start_time: Some(now),
                 connect_start: Some(now),
                 connect_end: Some(now),
                 ..Default::default()
-            },
-            poll_start: now,
-            fbt: None,
-            last_redirect: None,
-            finish: None,
+            }),
+            first_body_byte_time: None,
+            first_header_byte_time: None,
         }
     }
-    /// Returns the time the dns resolve started
-    pub fn get_dns_resolve_start(&self) -> Option<core::time::Duration> {
-        self.connection_stats.dns_resolve_start.map(|t| {
-            self.connection_stats
-                .start_time
-                .map(|start| t.duration_since(start))
-        })?
+}
+
+impl std::fmt::Display for HttpConnectionStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(c) = self.connection_stats {
+            c.fmt(f)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+/// Container struct for redirect stats, which are just http connection stats,
+/// along with the time the redirect finished.
+pub struct RedirectStats {
+    /// The approximate instant the redirect finished.
+    pub finished: std::time::Instant,
+
+    /// HTTP stats.
+    pub connection_stats: HttpConnectionStats,
+}
+
+impl std::fmt::Display for RedirectStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.connection_stats.fmt(f)?;
+
+        f.write_fmt(format_args!("next redirect: {:?}", self.finished))?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+/// Connection and request-level stats for a http request.
+pub struct RequestStats {
+    /// Connection-level stats.
+    pub http_stats: HttpConnectionStats,
+
+    /// Stats for all the redirects (save the final request.)
+    pub redirects: Vec<RedirectStats>,
+
+    /// The approximate moment we started this request.
+    pub poll_start: std::time::Instant,
+
+    /// The approximate instant we delivered the response to the caller.
+    pub finish: std::time::Instant,
+}
+
+impl RequestStats {
+    /// Creates an empty RequestStats struct; really only useful for supplying a default
+    /// for unsupported http 2 stats.
+    pub fn empty() -> Self {
+        RequestStats {
+            http_stats: HttpConnectionStats {
+                first_body_byte_time: None,
+                first_header_byte_time: None,
+                connection_stats: None,
+            },
+            redirects: vec![],
+            poll_start: std::time::Instant::now(),
+            finish: std::time::Instant::now(),
+        }
     }
 
-    /// Returns the time the dns resolve finished
-    pub fn get_dns_resolve_end(&self) -> Option<core::time::Duration> {
-        self.connection_stats.dns_resolve_end.map(|t| {
-            self.connection_stats
-                .start_time
-                .map(|start| t.duration_since(start))
-        })?
+    fn get_request_start(&self) -> std::time::Instant {
+        self.poll_start
     }
 
-    /// Returns the time the socket connection was started
-    pub fn get_connect_start(&self) -> Option<core::time::Duration> {
-        self.connection_stats.connect_start.map(|t| {
-            self.connection_stats
-                .start_time
-                .map(|start| t.duration_since(start))
-        })?
-    }
-
-    /// Returns the time the socket finished connecting
-    pub fn get_connect_end(&self) -> Option<core::time::Duration> {
-        self.connection_stats.connect_end.map(|t| {
-            self.connection_stats
-                .start_time
-                .map(|start| t.duration_since(start))
-        })?
-    }
-
-    /// Returns the time the tls negotiation started
-    pub fn get_tls_start(&self) -> Option<core::time::Duration> {
-        self.connection_stats.tls_connect_start.map(|t| {
-            self.connection_stats
-                .start_time
-                .map(|start| t.duration_since(start))
-        })?
-    }
-
-    /// Returns the time the tls negotiation completed
-    pub fn get_tls_end(&self) -> Option<core::time::Duration> {
-        self.connection_stats.tls_connect_end.map(|t| {
-            self.connection_stats
-                .start_time
-                .map(|start| t.duration_since(start))
-        })?
-    }
-
-    /// Returns the time the socket was polled for data.  Can be zero, if the
-    /// connection was re-used from a pool
-    pub fn get_transfer_start(&self) -> core::time::Duration {
-        self.connection_stats
-            .start_time
-            .map(|start| self.poll_start.duration_since(start))
-            .unwrap_or(core::time::Duration::from_millis(0))
-    }
-
-    /// Returns the time (relative to get_transfer_start) that the first byte was received
+    /// Returns the time (relative to get_request_start) that the first byte was received
     /// from the server
-    pub fn get_ttfb(&self) -> Option<core::time::Duration> {
-        self.fbt.map(|t| t.duration_since(self.poll_start))
+    pub fn get_header_ttfb(&self) -> Option<core::time::Duration> {
+        self.http_stats
+            .first_header_byte_time
+            .map(|t| t.duration_since(self.get_request_start()))
     }
 
-    /// Returns the time (relative to get_transfer_start) that the last redirection
+    /// Gets the time (relative to get_request_start) that the first body byte was received.
+    pub fn get_body_ttfb(&self) -> Option<core::time::Duration> {
+        self.http_stats
+            .first_body_byte_time
+            .map(|t| t.duration_since(self.get_request_start()))
+    }
+
+    /// Returns the time (relative to get_request_start) that the last redirection
     /// began (this would be the final request made in a chain of redirections)
     pub fn get_last_redirect_start(&self) -> Option<core::time::Duration> {
-        self.last_redirect
-            .map(|t| t.duration_since(self.poll_start))
+        self.redirects
+            .last()
+            .map(|r| r.finished.duration_since(self.get_request_start()))
     }
 
     /// Returns the time the request end (this does not include body time!)
-    pub fn get_request_end(&self) -> Option<core::time::Duration> {
-        self.finish.map(|t| t.duration_since(self.poll_start))
-    }
-
-    /// Get connection stats.
-    pub fn get_connection_stats(&self) -> ConnectionStats {
-        self.connection_stats
-    }
-
-    /// Set connection stats.
-    pub fn set_connection_stats(&mut self, cs: ConnectionStats) {
-        self.connection_stats = cs;
-    }
-
-    /// Sets the instant the last redirect started.
-    pub fn set_last_redirect(&mut self, redirect: Option<std::time::Instant>) {
-        if redirect.is_some() {
-            self.last_redirect = redirect;
-        }
+    pub fn get_request_end(&self) -> core::time::Duration {
+        self.finish.duration_since(self.get_request_start())
     }
 
     /// Sets the instant we started waiting for data from the server.
     pub fn set_poll_start(&mut self, start: std::time::Instant) {
+        //        eprintln!("here : {:?}", start.duration_since(self.connection_stats.start_time.unwrap()));
         self.poll_start = start;
     }
 
     /// Sets the time this request finished.
     pub fn set_finish(&mut self, finish: std::time::Instant) {
-        self.finish = Some(finish);
+        self.finish = finish;
     }
 }
 
 impl Display for RequestStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(s) = self.get_dns_resolve_start() {
-            if let Some(e) = self.get_dns_resolve_end() {
-                f.write_fmt(format_args!("name resolution: {:?}\n", e.sub(s)))?;
-            }
+        for r in &self.redirects {
+            r.fmt(f)?;
         }
 
-        if let Some(s) = self.get_connect_start() {
-            if let Some(e) = self.get_connect_end() {
-                f.write_fmt(format_args!("connection: {:?}\n", e.sub(s)))?;
-            }
-        }
-
-        if let Some(s) = self.get_tls_start() {
-            if let Some(e) = self.get_tls_end() {
-                f.write_fmt(format_args!("tls negotiation: {:?}\n", e.sub(s)))?;
-            }
+        if let Some(c) = self.http_stats.connection_stats {
+            c.fmt(f)?;
         }
 
         if let Some(e) = self.get_last_redirect_start() {
             f.write_fmt(format_args!("redirection: {:?}\n", e))?;
         }
 
-        if let Some(e) = self.get_ttfb() {
-            f.write_fmt(format_args!("time to first byte: {:?}\n", e))?;
+        if let Some(e) = self.get_header_ttfb() {
+            f.write_fmt(format_args!("time to first header byte: {:?}\n", e))?;
         }
 
-        if let Some(e) = self.get_request_end() {
-            f.write_fmt(format_args!("total time: {:?}\n", e))?;
+        if let Some(e) = self.get_body_ttfb() {
+            f.write_fmt(format_args!("time to first body byte: {:?}\n", e))?;
         }
+
+        f.write_fmt(format_args!("total time: {:?}\n", self.get_request_end()))?;
 
         Ok(())
     }

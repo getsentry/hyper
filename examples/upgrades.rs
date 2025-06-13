@@ -113,7 +113,7 @@ async fn client_upgrade_request(addr: SocketAddr) -> Result<()> {
         }
     });
 
-    let res = sender.send_request(req).await?;
+    let res = sender.send_request(req).await?.1;
 
     if res.status() != StatusCode::SWITCHING_PROTOCOLS {
         panic!("Our server didn't upgrade: {}", res.status());
