@@ -54,6 +54,9 @@ pub struct ConnectionStats {
     /// The approximate instant we started to process this connection.
     pub start_time: Option<std::time::Instant>,
 
+    /// The approximate instant (timestamp, in ms) we started to process this connection.
+    pub start_time_timestamp: Option<u128>,
+
     /// The approximate instant before we start dns resolution.
     pub dns_resolve_start: Option<std::time::Instant>,
 
@@ -98,6 +101,11 @@ impl fmt::Display for ConnectionStats {
 }
 
 impl ConnectionStats {
+    /// Returns the timestamp (in seconds) for the start of this connection.
+    pub fn get_start_timestamp(&self) -> Option<u128> {
+        self.start_time_timestamp
+    }
+
     /// Returns the time the dns resolve started
     pub fn get_dns_resolve_start(&self) -> Option<core::time::Duration> {
         self.dns_resolve_start

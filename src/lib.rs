@@ -90,7 +90,10 @@
 //!   behavior, for the purposes of protection. It is also possible to _change_
 //!   what the default options are set to, also in efforts to protect the
 //!   most people possible.
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    time::{Instant, SystemTime},
+};
 
 #[doc(hidden)]
 pub use http;
@@ -126,6 +129,12 @@ impl HttpConnectionStats {
         Self {
             connection_stats: Some(ConnectionStats {
                 start_time: Some(now),
+                start_time_timestamp: Some(
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis(),
+                ),
                 connect_start: Some(now),
                 connect_end: Some(now),
                 ..Default::default()
@@ -145,7 +154,7 @@ impl std::fmt::Display for HttpConnectionStats {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 /// Container struct for redirect stats, which are just http connection stats,
 /// along with the time the redirect finished.
 pub struct RedirectStats {
@@ -154,6 +163,9 @@ pub struct RedirectStats {
 
     /// HTTP stats.
     pub connection_stats: HttpConnectionStats,
+
+    /// The url of this redirect.
+    pub url: Uri,
 }
 
 impl std::fmt::Display for RedirectStats {
@@ -169,20 +181,40 @@ impl std::fmt::Display for RedirectStats {
 /// Connection and request-level stats for a http request.
 pub struct RequestStats {
     /// Connection-level stats.
-    pub http_stats: HttpConnectionStats,
+    http_stats: HttpConnectionStats,
 
     /// Stats for all the redirects (save the final request.)
-    pub redirects: Vec<RedirectStats>,
+    redirects: Vec<RedirectStats>,
 
     /// The approximate moment we started this request.
-    pub poll_start: std::time::Instant,
+    poll_start: std::time::Instant,
+
+    /// The approximate timestamp (in ms) when we started this request.
+    poll_start_timestamp: u128,
 
     /// The approximate instant we delivered the response to the caller.
-    pub finish: std::time::Instant,
+    finish: std::time::Instant,
 }
 
 impl RequestStats {
-    /// Creates an empty RequestStats struct; really only useful for supplying a default
+    /// Create a new request stats object.
+    pub fn new(
+        http_stats: HttpConnectionStats,
+        redirects: Vec<RedirectStats>,
+        poll_start: Instant,
+        poll_start_timestamp: u128,
+        finish: Instant,
+    ) -> Self {
+        RequestStats {
+            http_stats,
+            redirects,
+            poll_start,
+            poll_start_timestamp,
+            finish,
+        }
+    }
+
+    /// Creates an empty RequestStats struci; really only useful for supplying a default
     /// for unsupported http 2 stats.
     pub fn empty() -> Self {
         RequestStats {
@@ -193,8 +225,24 @@ impl RequestStats {
             },
             redirects: vec![],
             poll_start: std::time::Instant::now(),
+            poll_start_timestamp: 0,
             finish: std::time::Instant::now(),
         }
+    }
+
+    /// Get the http connection stats for this request
+    pub fn get_http_stats(&self) -> &HttpConnectionStats {
+        &self.http_stats
+    }
+
+    /// Get the http redirect stats for all redirects
+    pub fn get_redirects(&self) -> &Vec<RedirectStats> {
+        &self.redirects
+    }
+
+    /// Returns the timestamp (in ms) when this request approximately started
+    pub fn get_request_start_timestamp(&self) -> u128 {
+        self.poll_start_timestamp
     }
 
     fn get_request_start(&self) -> std::time::Instant {
@@ -227,17 +275,6 @@ impl RequestStats {
     /// Returns the time the request end (this does not include body time!)
     pub fn get_request_end(&self) -> core::time::Duration {
         self.finish.duration_since(self.get_request_start())
-    }
-
-    /// Sets the instant we started waiting for data from the server.
-    pub fn set_poll_start(&mut self, start: std::time::Instant) {
-        //        eprintln!("here : {:?}", start.duration_since(self.connection_stats.start_time.unwrap()));
-        self.poll_start = start;
-    }
-
-    /// Sets the time this request finished.
-    pub fn set_finish(&mut self, finish: std::time::Instant) {
-        self.finish = finish;
     }
 }
 
