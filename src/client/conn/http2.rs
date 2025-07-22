@@ -165,8 +165,9 @@ where
     pub fn try_send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = Result<(HttpConnectionStats, Response<IncomingBody>), TrySendError<Request<B>>>>
-    {
+    ) -> impl Future<
+        Output = Result<(HttpConnectionStats, Response<IncomingBody>), TrySendError<Request<B>>>,
+    > {
         let sent = self.dispatch.try_send(req);
         async move {
             match sent {
