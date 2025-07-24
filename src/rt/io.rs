@@ -3,6 +3,7 @@ use std::mem::MaybeUninit;
 use std::ops::{DerefMut, Sub};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Instant;
 
 // New IO traits? What?! Why, are you bonkers?
 //
@@ -48,47 +49,45 @@ pub trait Stats {
     fn stats(&mut self) -> Option<ConnectionStats>;
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 /// Connection-level stats for http requests.
 pub struct ConnectionStats {
     /// The approximate instant we started to process this connection.
-    pub start_time: Option<std::time::Instant>,
+    start_time: Instant,
 
     /// The approximate instant (timestamp, in ms) we started to process this connection.
-    pub start_time_timestamp: Option<u128>,
+    start_time_timestamp: u128,
 
     /// The approximate instant before we start dns resolution.
-    pub dns_resolve_start: Option<std::time::Instant>,
+    dns_resolve_start: Instant,
 
     /// The approximate instant after we have finished dns resolution.
-    pub dns_resolve_end: Option<std::time::Instant>,
+    dns_resolve_end: Instant,
 
     /// The approximate instant before we start establishing a TCP connection.
-    pub connect_start: Option<std::time::Instant>,
+    connect_start: Instant,
 
     /// The approximate instant after we finish establishing a TCP connection.
-    pub connect_end: Option<std::time::Instant>,
+    connect_end: Instant,
 
     /// The approximate instant before we start upgrading a connection to TLS.
-    pub tls_connect_start: Option<std::time::Instant>,
+    tls_connect_start: Option<Instant>,
 
     /// The approximate instant after we have finished upgrading a connection to TLS.
-    pub tls_connect_end: Option<std::time::Instant>,
+    tls_connect_end: Option<Instant>,
 }
 
 impl fmt::Display for ConnectionStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(s) = self.get_dns_resolve_start() {
-            if let Some(e) = self.get_dns_resolve_end() {
-                f.write_fmt(format_args!("name resolution: {:?}\n", e.sub(s)))?;
-            }
-        }
+        f.write_fmt(format_args!(
+            "name resolution: {:?}\n",
+            self.get_dns_resolve_end().sub(self.get_dns_resolve_start())
+        ))?;
 
-        if let Some(s) = self.get_connect_start() {
-            if let Some(e) = self.get_connect_end() {
-                f.write_fmt(format_args!("connection: {:?}\n", e.sub(s)))?;
-            }
-        }
+        f.write_fmt(format_args!(
+            "connection: {:?}\n",
+            self.get_connect_end().sub(self.get_connect_start())
+        ))?;
 
         if let Some(s) = self.get_tls_start() {
             if let Some(e) = self.get_tls_end() {
@@ -101,45 +100,94 @@ impl fmt::Display for ConnectionStats {
 }
 
 impl ConnectionStats {
-    /// Returns the timestamp (in seconds) for the start of this connection.
-    pub fn get_start_timestamp(&self) -> Option<u128> {
+    /// Constructs a new ConnectionStats
+    pub fn new(
+        start_time: Instant,
+        start_time_timestamp: u128,
+        dns_resolve_start: Instant,
+        dns_resolve_end: Instant,
+        connect_start: Instant,
+        connect_end: Instant,
+    ) -> Self {
+        ConnectionStats {
+            start_time: start_time,
+            start_time_timestamp: start_time_timestamp,
+            dns_resolve_start,
+            dns_resolve_end,
+            connect_start,
+            connect_end,
+            tls_connect_start: None,
+            tls_connect_end: None,
+        }
+    }
+
+    /// Constructs a new ConnectionStats from an old ConnectionStats, adding in tls timings.
+    pub fn tls_new(stats: ConnectionStats, tls_start: Instant, tls_end: Instant) -> Self {
+        Self {
+            start_time: stats.start_time,
+            start_time_timestamp: stats.start_time_timestamp,
+            dns_resolve_start: stats.dns_resolve_start,
+            dns_resolve_end: stats.dns_resolve_end,
+            connect_start: stats.connect_start,
+            connect_end: stats.connect_end,
+            tls_connect_start: Some(tls_start),
+            tls_connect_end: Some(tls_end),
+        }
+    }
+
+    /// Constructs a new ConnectionStats for a pooled connection; all stats are
+    /// assumed to be instantaneous.
+    pub fn new_pooled(start_time: Instant, start_time_timestamp: u128) -> Self {
+        ConnectionStats {
+            start_time: start_time,
+            start_time_timestamp: start_time_timestamp,
+            dns_resolve_start: start_time,
+            dns_resolve_end: start_time,
+            connect_start: start_time,
+            connect_end: start_time,
+            tls_connect_start: Some(start_time),
+            tls_connect_end: Some(start_time),
+        }
+    }
+
+    /// Returns the instant for the start of this connection.
+    pub fn get_start_instant(&self) -> Instant {
+        self.start_time
+    }
+
+    /// Returns the timestamp (in us) for the start of this connection.
+    pub fn get_start_timestamp(&self) -> u128 {
         self.start_time_timestamp
     }
 
     /// Returns the time the dns resolve started
-    pub fn get_dns_resolve_start(&self) -> Option<core::time::Duration> {
+    pub fn get_dns_resolve_start(&self) -> Instant {
         self.dns_resolve_start
-            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
     }
 
     /// Returns the time the dns resolve finished
-    pub fn get_dns_resolve_end(&self) -> Option<core::time::Duration> {
+    pub fn get_dns_resolve_end(&self) -> Instant {
         self.dns_resolve_end
-            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
     }
 
     /// Returns the time the socket connection was started
-    pub fn get_connect_start(&self) -> Option<core::time::Duration> {
+    pub fn get_connect_start(&self) -> Instant {
         self.connect_start
-            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
     }
 
     /// Returns the time the socket finished connecting
-    pub fn get_connect_end(&self) -> Option<core::time::Duration> {
+    pub fn get_connect_end(&self) -> Instant {
         self.connect_end
-            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
     }
 
     /// Returns the time the tls negotiation started
-    pub fn get_tls_start(&self) -> Option<core::time::Duration> {
+    pub fn get_tls_start(&self) -> Option<Instant> {
         self.tls_connect_start
-            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
     }
 
     /// Returns the time the tls negotiation completed
-    pub fn get_tls_end(&self) -> Option<core::time::Duration> {
+    pub fn get_tls_end(&self) -> Option<Instant> {
         self.tls_connect_end
-            .map(|t| self.start_time.map(|start| t.duration_since(start)))?
     }
 }
 

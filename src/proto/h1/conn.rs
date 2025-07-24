@@ -6,7 +6,7 @@ use std::marker::{PhantomData, Unpin};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 #[cfg(feature = "server")]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::rt::{Read, Stats, Write};
 use bytes::{Buf, Bytes};
@@ -15,6 +15,7 @@ use http::header::{HeaderValue, CONNECTION, TE};
 use http::{HeaderMap, Method, Version};
 use http_body::Frame;
 use httparse::ParserConfig;
+use std::time::Instant;
 
 use super::io::Buffered;
 use super::{Decoder, Encode, EncodedBuf, Encoder, Http1Transaction, ParseContext, Wants};
@@ -24,7 +25,7 @@ use crate::common::time::Time;
 use crate::proto::{BodyLength, MessageHead};
 #[cfg(feature = "server")]
 use crate::rt::Sleep;
-use crate::{headers, HttpConnectionStats};
+use crate::{headers, stats::HttpConnectionStats};
 
 const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
@@ -117,18 +118,18 @@ where
     }
 
     pub(crate) fn http_connection_stats(&mut self) -> HttpConnectionStats {
-        HttpConnectionStats {
-            connection_stats: self.io.connection_stats(),
-            first_body_byte_time: self.first_body_byte_time,
-            first_header_byte_time: self.first_header_byte_time,
-        }
+        HttpConnectionStats::new(
+            self.first_body_byte_time,
+            self.first_header_byte_time,
+            self.io.connection_stats(),
+        )
     }
 
-    pub(crate) fn set_first_byte_of_body(&mut self, time: Option<std::time::Instant>) {
+    pub(crate) fn set_first_byte_of_body(&mut self, time: Option<Instant>) {
         self.first_body_byte_time = time;
     }
 
-    pub(crate) fn set_first_byte_of_header(&mut self, time: Option<std::time::Instant>) {
+    pub(crate) fn set_first_byte_of_header(&mut self, time: Option<Instant>) {
         self.first_header_byte_time = time;
     }
 

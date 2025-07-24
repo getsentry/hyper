@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     rt::{Read, Stats, Write},
-    HttpConnectionStats,
+    stats::HttpConnectionStats,
 };
 use bytes::Bytes;
 use futures_channel::mpsc::{Receiver, Sender};

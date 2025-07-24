@@ -18,7 +18,7 @@ use crate::body::{Body, Incoming as IncomingBody};
 use crate::common::time::Time;
 use crate::rt::bounds::Http2ClientConnExec;
 use crate::rt::Timer;
-use crate::{proto, HttpConnectionStats};
+use crate::{proto, stats::HttpConnectionStats};
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {

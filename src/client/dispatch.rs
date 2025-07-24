@@ -11,7 +11,7 @@ use pin_project_lite::pin_project;
 use tokio::sync::{mpsc, oneshot};
 
 #[cfg(feature = "http2")]
-use crate::{body::Incoming, proto::h2::client::ResponseFutMap, HttpConnectionStats};
+use crate::{body::Incoming, proto::h2::client::ResponseFutMap, stats::HttpConnectionStats};
 
 pub(crate) type RetryPromise<T, U> = oneshot::Receiver<Result<U, TrySendError<T>>>;
 pub(crate) type Promise<T> = oneshot::Receiver<Result<T, crate::Error>>;
