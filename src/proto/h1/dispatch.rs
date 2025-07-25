@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     rt::{Read, Stats, Write},
-    HttpConnectionStats,
+    stats::HttpConnectionStats,
 };
 use bytes::{Buf, Bytes};
 use futures_core::ready;
