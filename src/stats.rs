@@ -84,6 +84,9 @@ pub struct RedirectStats {
 
     /// Request body size.
     request_body_size: u32,
+
+    /// Leaf DER-encoded certificate, if available.
+    certificate: Option<Vec<u8>>,
 }
 
 impl RedirectStats {
@@ -96,6 +99,7 @@ impl RedirectStats {
         status_code: u16,
         url: Uri,
         request_body_size: u32,
+        certificate: Option<Vec<u8>>,
     ) -> Self {
         Self {
             finished,
@@ -105,7 +109,13 @@ impl RedirectStats {
             status_code,
             url,
             request_body_size,
+            certificate,
         }
+    }
+
+    /// Returns the DER-encoded certificate for this redirect, if available.
+    pub fn get_certificate_bytes(&self) -> Option<&Vec<u8>> {
+        self.certificate.as_ref()
     }
 
     /// Gets the HTTP status code
@@ -181,6 +191,7 @@ impl RequestStats {
         url: Uri,
         status_code: u16,
         request_body_size: u32,
+        certificate: Option<Vec<u8>>,
     ) -> Self {
         redirects.push(RedirectStats {
             status_code,
@@ -190,6 +201,7 @@ impl RequestStats {
             http_stats,
             url,
             request_body_size,
+            certificate,
         });
         RequestStats { redirects }
     }
