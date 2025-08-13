@@ -110,8 +110,8 @@ impl ConnectionStats {
         connect_end: Instant,
     ) -> Self {
         ConnectionStats {
-            start_time: start_time,
-            start_time_timestamp: start_time_timestamp,
+            start_time,
+            start_time_timestamp,
             dns_resolve_start,
             dns_resolve_end,
             connect_start,
@@ -139,8 +139,8 @@ impl ConnectionStats {
     /// assumed to be instantaneous.
     pub fn new_pooled(start_time: Instant, start_time_timestamp: u128) -> Self {
         ConnectionStats {
-            start_time: start_time,
-            start_time_timestamp: start_time_timestamp,
+            start_time,
+            start_time_timestamp,
             dns_resolve_start: start_time,
             dns_resolve_end: start_time,
             connect_start: start_time,

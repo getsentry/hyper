@@ -9,8 +9,11 @@ pub struct HttpConnectionStats {
     /// The approximate instant the first body byte was received.
     first_body_byte_time: Option<Instant>,
 
-    /// The approximate instant the first header byte was received.
-    first_header_byte_time: Option<Instant>,
+    /// The approximate instant the request went out over the wire.
+    request_sent_time: Option<Instant>,
+
+    /// The approximate instant the response became available from the wire.
+    response_start_time: Option<Instant>,
 
     /// The connection stats for this http request (if the connection was
     /// not pooled.)
@@ -21,13 +24,13 @@ impl HttpConnectionStats {
     /// Constructs a new HttpConnectionStats
     pub fn new(
         first_body_byte_time: Option<Instant>,
-        first_header_byte_time: Option<Instant>,
         connection_stats: Option<ConnectionStats>,
     ) -> Self {
         Self {
             first_body_byte_time,
-            first_header_byte_time,
             connection_stats,
+            request_sent_time: None,
+            response_start_time: None,
         }
     }
     /// Constructs a mostly-empty RequestStats struct, with an instantaneous connection time.  
@@ -41,8 +44,15 @@ impl HttpConnectionStats {
         Self {
             connection_stats: Some(ConnectionStats::new(now, now_timestamp, now, now, now, now)),
             first_body_byte_time: Some(now),
-            first_header_byte_time: Some(now),
+            request_sent_time: None,
+            response_start_time: None,
         }
+    }
+
+    /// Sets the request and response start times.
+    pub fn set_request_times(&mut self, request_sent_time: Instant, response_start_time: Instant) {
+        self.request_sent_time = Some(request_sent_time);
+        self.response_start_time = Some(response_start_time);
     }
 
     /// Gets connection stats.
@@ -138,18 +148,22 @@ impl RedirectStats {
         self.poll_start
     }
 
-    /// Returns the time (relative to get_request_start) that the first byte was received
-    /// from the server
-    pub fn get_header_ttfb(&self) -> Option<Instant> {
-        self.http_stats.first_header_byte_time
+    /// Returns the instant when this request approximately started
+    pub fn get_request_sent(&self) -> Instant {
+        self.http_stats.request_sent_time.unwrap()
     }
 
-    /// Gets the time (relative to get_request_start) that the first body byte was received.
+    /// Returns the instant when this request approximately started
+    pub fn get_response_start(&self) -> Instant {
+        self.http_stats.response_start_time.unwrap()
+    }
+
+    /// Gets the time  that the first body byte was received.
     pub fn get_body_ttfb(&self) -> Option<Instant> {
         self.http_stats.first_body_byte_time
     }
 
-    /// Returns the time the request end (this does not include body time!)
+    /// Returns the time the request ended.
     pub fn get_request_end(&self) -> Instant {
         self.finished
     }
@@ -185,8 +199,8 @@ impl RequestStats {
         redirects.push(RedirectStats {
             status_code,
             finished,
-            poll_start: poll_start,
-            poll_start_timestamp: poll_start_timestamp,
+            poll_start,
+            poll_start_timestamp,
             http_stats,
             url,
             request_body_size,
