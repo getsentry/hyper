@@ -41,7 +41,6 @@ pub(crate) struct Conn<I, B, T> {
     state: State,
     _marker: PhantomData<fn(T)>,
 
-    first_header_byte_time: Option<std::time::Instant>,
     first_body_byte_time: Option<std::time::Instant>,
 }
 
@@ -89,7 +88,6 @@ where
                 allow_trailer_fields: false,
             },
             first_body_byte_time: None,
-            first_header_byte_time: None,
             _marker: PhantomData,
         }
     }
@@ -120,17 +118,12 @@ where
     pub(crate) fn http_connection_stats(&mut self) -> HttpConnectionStats {
         HttpConnectionStats::new(
             self.first_body_byte_time,
-            self.first_header_byte_time,
             self.io.connection_stats(),
         )
     }
 
     pub(crate) fn set_first_byte_of_body(&mut self, time: Option<Instant>) {
         self.first_body_byte_time = time;
-    }
-
-    pub(crate) fn set_first_byte_of_header(&mut self, time: Option<Instant>) {
-        self.first_header_byte_time = time;
     }
 
     pub(crate) fn set_write_strategy_flatten(&mut self) {
@@ -354,7 +347,6 @@ where
             .get(TE)
             .map_or(false, |te_header| te_header == "trailers");
 
-        self.set_first_byte_of_header(fbt);
         Poll::Ready(Some(Ok((msg.head, msg.decode, wants))))
     }
 

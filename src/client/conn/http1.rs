@@ -225,10 +225,15 @@ where
         Output = Result<(HttpConnectionStats, Response<IncomingBody>), TrySendError<Request<B>>>,
     > {
         let sent = self.dispatch.try_send(req);
+        let sent_time = std::time::Instant::now();
         async move {
             match sent {
                 Ok(rx) => match rx.await {
-                    Ok(Ok(res)) => Ok(res),
+                    Ok(Ok((mut stats, res))) => {
+                        let recv_time = std::time::Instant::now();
+                        stats.set_request_times(sent_time, recv_time);
+                        Ok((stats, res))
+                    }
                     Ok(Err(err)) => Err(err),
                     // this is definite bug if it happens, but it shouldn't happen!
                     Err(_) => panic!("dispatch dropped without returning error"),
