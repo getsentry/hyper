@@ -10,6 +10,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::rt::{Read, Stats, Write};
+use crate::stats::RequestId;
 use futures_core::ready;
 use http::{Request, Response};
 
@@ -22,7 +23,10 @@ use crate::{proto, stats::HttpConnectionStats};
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {
-    dispatch: dispatch::UnboundedSender<Request<B>, (HttpConnectionStats, Response<IncomingBody>)>,
+    dispatch: dispatch::UnboundedSender<
+        (Request<B>, RequestId),
+        (HttpConnectionStats, Response<IncomingBody>),
+    >,
 }
 
 impl<B> Clone for SendRequest<B> {
@@ -134,8 +138,9 @@ where
     pub fn send_request(
         &mut self,
         req: Request<B>,
+        req_id: RequestId,
     ) -> impl Future<Output = crate::Result<(HttpConnectionStats, Response<IncomingBody>)>> {
-        let sent = self.dispatch.send(req);
+        let sent = self.dispatch.send((req, req_id));
 
         async move {
             match sent {
@@ -165,10 +170,14 @@ where
     pub fn try_send_request(
         &mut self,
         req: Request<B>,
+        req_id: RequestId,
     ) -> impl Future<
-        Output = Result<(HttpConnectionStats, Response<IncomingBody>), TrySendError<Request<B>>>,
+        Output = Result<
+            (HttpConnectionStats, Response<IncomingBody>),
+            TrySendError<(Request<B>, RequestId)>,
+        >,
     > {
-        let sent = self.dispatch.try_send(req);
+        let sent = self.dispatch.try_send((req, req_id));
         async move {
             match sent {
                 Ok(rx) => match rx.await {

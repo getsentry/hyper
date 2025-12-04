@@ -7,6 +7,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use crate::rt::{Read, Stats, Write};
+use crate::stats::RequestId;
 use bytes::Bytes;
 use futures_core::ready;
 use http::{Request, Response};
@@ -21,7 +22,8 @@ type Dispatcher<T, B> =
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {
-    dispatch: dispatch::Sender<Request<B>, (HttpConnectionStats, Response<IncomingBody>)>,
+    dispatch:
+        dispatch::Sender<(Request<B>, RequestId), (HttpConnectionStats, Response<IncomingBody>)>,
 }
 
 /// Deconstructed parts of a `Connection`.
@@ -191,8 +193,9 @@ where
     pub fn send_request(
         &mut self,
         req: Request<B>,
+        req_id: RequestId,
     ) -> impl Future<Output = crate::Result<(HttpConnectionStats, Response<IncomingBody>)>> {
-        let sent = self.dispatch.send(req);
+        let sent = self.dispatch.send((req, req_id));
 
         async move {
             match sent {
@@ -221,16 +224,22 @@ where
     pub fn try_send_request(
         &mut self,
         req: Request<B>,
+        req_id: RequestId,
     ) -> impl Future<
-        Output = Result<(HttpConnectionStats, Response<IncomingBody>), TrySendError<Request<B>>>,
+        Output = Result<
+            (HttpConnectionStats, Response<IncomingBody>),
+            TrySendError<(Request<B>, RequestId)>,
+        >,
     > {
-        let sent = self.dispatch.try_send(req);
         let sent_time = std::time::Instant::now();
+        let sent = self.dispatch.try_send((req, req_id));
+        crate::stats::get_request_stats(req_id).set_request_sent_time(sent_time);
         async move {
             match sent {
                 Ok(rx) => match rx.await {
                     Ok(Ok((mut stats, res))) => {
                         let recv_time = std::time::Instant::now();
+                        crate::stats::get_request_stats(req_id).set_response_start_time(recv_time);
                         stats.set_request_times(sent_time, recv_time);
                         Ok((stats, res))
                     }

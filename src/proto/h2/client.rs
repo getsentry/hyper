@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     rt::{Read, Stats, Write},
-    stats::HttpConnectionStats,
+    stats::{HttpConnectionStats, RequestId},
 };
 use bytes::Bytes;
 use futures_channel::mpsc::{Receiver, Sender};
@@ -36,8 +36,10 @@ use crate::upgrade::Upgraded;
 use crate::{Request, Response};
 use h2::client::ResponseFuture;
 
-type ClientRx<B> =
-    crate::client::dispatch::Receiver<Request<B>, (HttpConnectionStats, Response<IncomingBody>)>;
+type ClientRx<B> = crate::client::dispatch::Receiver<
+    (Request<B>, RequestId),
+    (HttpConnectionStats, Response<IncomingBody>),
+>;
 
 ///// An mpsc channel is used to help notify the `Connection` task when *all*
 ///// other handles to it have been dropped, so that it can shutdown.
@@ -416,7 +418,7 @@ where
     fut: ResponseFuture,
     body_tx: SendStream<SendBuf<B::Data>>,
     body: B,
-    cb: Callback<Request<B>, (HttpConnectionStats, Response<IncomingBody>)>,
+    cb: Callback<(Request<B>, RequestId), (HttpConnectionStats, Response<IncomingBody>)>,
 }
 
 impl<B: Body> Unpin for FutCtx<B> {}
@@ -564,7 +566,7 @@ where
 {
     type Output = Result<
         (HttpConnectionStats, Response<crate::body::Incoming>),
-        (crate::Error, Option<Request<B>>),
+        (crate::Error, Option<(Request<B>, RequestId)>),
     >;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -588,7 +590,7 @@ where
                         send_stream.send_reset(h2::Reason::INTERNAL_ERROR);
                         return Poll::Ready(Err((
                             crate::Error::new_h2(h2::Reason::INTERNAL_ERROR.into()),
-                            None::<Request<B>>,
+                            None::<(Request<B>, RequestId)>,
                         )));
                     }
                     let (parts, recv_stream) = res.into_parts();
@@ -622,7 +624,10 @@ where
                 ping.ensure_not_timed_out().map_err(|e| (e, None))?;
 
                 debug!("client response error: {}", err);
-                Poll::Ready(Err((crate::Error::new_h2(err), None::<Request<B>>)))
+                Poll::Ready(Err((
+                    crate::Error::new_h2(err),
+                    None::<(Request<B>, RequestId)>,
+                )))
             }
         }
     }
@@ -661,7 +666,7 @@ where
             }
 
             match self.req_rx.poll_recv(cx) {
-                Poll::Ready(Some((req, cb))) => {
+                Poll::Ready(Some(((req, _req_id), cb))) => {
                     // check that future hasn't been canceled already
                     if cb.is_canceled() {
                         trace!("request callback is canceled");

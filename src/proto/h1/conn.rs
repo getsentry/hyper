@@ -116,10 +116,7 @@ where
     }
 
     pub(crate) fn http_connection_stats(&mut self) -> HttpConnectionStats {
-        HttpConnectionStats::new(
-            self.first_body_byte_time,
-            self.io.connection_stats(),
-        )
+        HttpConnectionStats::new(self.first_body_byte_time, self.io.connection_stats())
     }
 
     pub(crate) fn set_first_byte_of_body(&mut self, time: Option<Instant>) {

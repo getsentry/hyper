@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     rt::{Read, Stats, Write},
-    stats::HttpConnectionStats,
+    stats::{HttpConnectionStats, RequestId},
 };
 use bytes::{Buf, Bytes};
 use futures_core::ready;
@@ -59,14 +59,14 @@ cfg_server! {
 cfg_client! {
     pin_project_lite::pin_project! {
         pub(crate) struct Client<B> {
-            callback: Option<crate::client::dispatch::Callback<Request<B>, (HttpConnectionStats, http::Response<IncomingBody>)>>,
+            callback: Option<crate::client::dispatch::Callback<(Request<B>, RequestId), (HttpConnectionStats, http::Response<IncomingBody>)>>,
             #[pin]
             rx: ClientRx<B>,
             rx_closed: bool,
         }
     }
 
-    type ClientRx<B> = crate::client::dispatch::Receiver<Request<B>, (HttpConnectionStats, http::Response<IncomingBody>)>;
+    type ClientRx<B> = crate::client::dispatch::Receiver<(Request<B>, RequestId), (HttpConnectionStats, http::Response<IncomingBody>)>;
 }
 
 impl<D, Bs, I, T> Dispatcher<D, Bs, I, T>
@@ -617,7 +617,7 @@ cfg_client! {
             let mut this = self.as_mut();
             debug_assert!(!this.rx_closed);
             match this.rx.poll_recv(cx) {
-                Poll::Ready(Some((req, mut cb))) => {
+                Poll::Ready(Some(((req, _req_id), mut cb))) => {
                     // check that future hasn't been canceled already
                     match cb.poll_canceled(cx) {
                         Poll::Ready(()) => {
