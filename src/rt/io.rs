@@ -46,10 +46,6 @@ pub trait Read {
 }
 
 /// Collects connection-level statistics for a connection.
-pub trait Stats {
-    /// Get the connection statistics for this connection.
-    fn stats(&mut self) -> Option<ConnectionStats>;
-}
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 /// Connection-level stats for http requests.

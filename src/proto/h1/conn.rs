@@ -8,7 +8,7 @@ use std::task::{Context, Poll};
 #[cfg(feature = "server")]
 use std::time::Duration;
 
-use crate::rt::{Read, Stats, Write};
+use crate::rt::{Read, Write};
 use bytes::{Buf, Bytes};
 use futures_core::ready;
 use http::header::{HeaderValue, CONNECTION, TE};
@@ -22,10 +22,10 @@ use super::{Decoder, Encode, EncodedBuf, Encoder, Http1Transaction, ParseContext
 use crate::body::DecodedLength;
 #[cfg(feature = "server")]
 use crate::common::time::Time;
+use crate::headers;
 use crate::proto::{BodyLength, MessageHead};
 #[cfg(feature = "server")]
 use crate::rt::Sleep;
-use crate::{headers, stats::HttpConnectionStats};
 
 const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
@@ -46,7 +46,7 @@ pub(crate) struct Conn<I, B, T> {
 
 impl<I, B, T> Conn<I, B, T>
 where
-    I: Read + Write + Stats + Unpin,
+    I: Read + Write + Unpin,
     B: Buf,
     T: Http1Transaction,
 {
@@ -113,10 +113,6 @@ where
     #[cfg(feature = "client")]
     pub(crate) fn set_read_buf_exact_size(&mut self, sz: usize) {
         self.io.set_read_buf_exact_size(sz);
-    }
-
-    pub(crate) fn http_connection_stats(&mut self) -> HttpConnectionStats {
-        HttpConnectionStats::new(self.first_body_byte_time, self.io.connection_stats())
     }
 
     pub(crate) fn set_first_byte_of_body(&mut self, time: Option<Instant>) {

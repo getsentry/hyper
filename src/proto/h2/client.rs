@@ -8,8 +8,8 @@ use std::{
 };
 
 use crate::{
-    rt::{Read, Stats, Write},
-    stats::{HttpConnectionStats, RequestId},
+    rt::{Read, Write},
+    stats::RequestId,
 };
 use bytes::Bytes;
 use futures_channel::mpsc::{Receiver, Sender};
@@ -36,10 +36,8 @@ use crate::upgrade::Upgraded;
 use crate::{Request, Response};
 use h2::client::ResponseFuture;
 
-type ClientRx<B> = crate::client::dispatch::Receiver<
-    (Request<B>, RequestId),
-    (HttpConnectionStats, Response<IncomingBody>),
->;
+type ClientRx<B> =
+    crate::client::dispatch::Receiver<(Request<B>, RequestId), Response<IncomingBody>>;
 
 ///// An mpsc channel is used to help notify the `Connection` task when *all*
 ///// other handles to it have been dropped, so that it can shutdown.
@@ -154,7 +152,7 @@ pub(crate) async fn handshake<T, B, E>(
     timer: Time,
 ) -> crate::Result<ClientTask<B, E, T>>
 where
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
     B: Body + 'static,
     B::Data: Send + 'static,
     E: Http2ClientConnExec<B, T> + Unpin,
@@ -219,7 +217,7 @@ pin_project! {
 impl<T, B> Conn<T, B>
 where
     B: Body,
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
 {
     fn new(ponger: Ponger, conn: Connection<Compat<T>, SendBuf<<B as Body>::Data>>) -> Self {
         Conn { ponger, conn }
@@ -229,7 +227,7 @@ where
 impl<T, B> Future for Conn<T, B>
 where
     B: Body,
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
 {
     type Output = Result<(), h2::Error>;
 
@@ -257,7 +255,7 @@ pin_project! {
         B: Body,
         T: Read,
         T: Write,
-        T: Stats,
+
         T: Unpin,
     {
         #[pin]
@@ -270,7 +268,7 @@ pin_project! {
 impl<T, B> Future for ConnMapErr<T, B>
 where
     B: Body,
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
 {
     type Output = Result<(), ()>;
 
@@ -293,7 +291,7 @@ where
 impl<T, B> FusedFuture for ConnMapErr<T, B>
 where
     B: Body,
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
 {
     fn is_terminated(&self) -> bool {
         self.is_terminated
@@ -306,7 +304,6 @@ pin_project! {
         B: Body,
         T: Read,
         T: Write,
-        T: Stats,
         T: Unpin,
     {
         #[pin]
@@ -321,7 +318,7 @@ pin_project! {
 impl<T, B> ConnTask<T, B>
 where
     B: Body,
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
 {
     fn new(
         conn: ConnMapErr<T, B>,
@@ -339,7 +336,7 @@ where
 impl<T, B> Future for ConnTask<T, B>
 where
     B: Body,
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
 {
     type Output = ();
 
@@ -372,7 +369,6 @@ pin_project! {
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         T: Read,
         T: Write,
-        T: Stats,
         T: Unpin,
     {
         Pipe {
@@ -394,7 +390,7 @@ impl<B, T> Future for H2ClientFuture<B, T>
 where
     B: http_body::Body + 'static,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
 {
     type Output = ();
 
@@ -418,7 +414,7 @@ where
     fut: ResponseFuture,
     body_tx: SendStream<SendBuf<B::Data>>,
     body: B,
-    cb: Callback<(Request<B>, RequestId), (HttpConnectionStats, Response<IncomingBody>)>,
+    cb: Callback<(Request<B>, RequestId), Response<IncomingBody>>,
 }
 
 impl<B: Body> Unpin for FutCtx<B> {}
@@ -443,7 +439,7 @@ where
     B: Body + 'static,
     E: Http2ClientConnExec<B, T> + Unpin,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
 {
     pub(crate) fn is_extended_connect_protocol_enabled(&self) -> bool {
         self.h2_tx.is_extended_connect_protocol_enabled()
@@ -495,7 +491,7 @@ where
     B::Data: Send,
     E: Http2ClientConnExec<B, T> + Unpin,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
 {
     fn poll_pipe(&mut self, f: FutCtx<B>, cx: &mut Context<'_>) {
         let ping = self.ping.clone();
@@ -564,10 +560,8 @@ impl<B> Future for ResponseFutMap<B>
 where
     B: Body + 'static,
 {
-    type Output = Result<
-        (HttpConnectionStats, Response<crate::body::Incoming>),
-        (crate::Error, Option<(Request<B>, RequestId)>),
-    >;
+    type Output =
+        Result<Response<crate::body::Incoming>, (crate::Error, Option<(Request<B>, RequestId)>)>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
@@ -608,16 +602,14 @@ where
                     pending.fulfill(upgraded);
                     res.extensions_mut().insert(on_upgrade);
 
-                    // TODO: to support request stats, we'll need to fork/hack the h2 crate
-                    Poll::Ready(Ok((HttpConnectionStats::new_http2(), res)))
+                    Poll::Ready(Ok(res))
                 } else {
                     let res = res.map(|stream| {
                         let ping = ping.for_stream(&stream);
                         IncomingBody::h2(stream, content_length.into(), ping)
                     });
 
-                    // TODO: to support request stats, we'll need to fork/hack the h2 crate
-                    Poll::Ready(Ok((HttpConnectionStats::new_http2(), res)))
+                    Poll::Ready(Ok(res))
                 }
             }
             Err(err) => {
@@ -639,7 +631,7 @@ where
     B::Data: Send,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     E: Http2ClientConnExec<B, T> + Unpin,
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
 {
     type Output = crate::Result<Dispatched>;
 

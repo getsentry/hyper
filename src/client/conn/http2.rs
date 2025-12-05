@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use crate::rt::{Read, Stats, Write};
+use crate::rt::{Read, Write};
 use crate::stats::RequestId;
 use futures_core::ready;
 use http::{Request, Response};
@@ -17,16 +17,13 @@ use http::{Request, Response};
 use super::super::dispatch::{self, TrySendError};
 use crate::body::{Body, Incoming as IncomingBody};
 use crate::common::time::Time;
+use crate::proto;
 use crate::rt::bounds::Http2ClientConnExec;
 use crate::rt::Timer;
-use crate::{proto, stats::HttpConnectionStats};
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {
-    dispatch: dispatch::UnboundedSender<
-        (Request<B>, RequestId),
-        (HttpConnectionStats, Response<IncomingBody>),
-    >,
+    dispatch: dispatch::UnboundedSender<(Request<B>, RequestId), Response<IncomingBody>>,
 }
 
 impl<B> Clone for SendRequest<B> {
@@ -46,7 +43,7 @@ impl<B> Clone for SendRequest<B> {
 #[must_use = "futures do nothing unless polled"]
 pub struct Connection<T, B, E>
 where
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
     B: Body + 'static,
     E: Http2ClientConnExec<B, T> + Unpin,
     B::Error: Into<Box<dyn Error + Send + Sync>>,
@@ -76,7 +73,7 @@ pub async fn handshake<E, T, B>(
     io: T,
 ) -> crate::Result<(SendRequest<B>, Connection<T, B, E>)>
 where
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
     B: Body + 'static,
     B::Data: Send,
     B::Error: Into<Box<dyn Error + Send + Sync>>,
@@ -139,7 +136,7 @@ where
         &mut self,
         req: Request<B>,
         req_id: RequestId,
-    ) -> impl Future<Output = crate::Result<(HttpConnectionStats, Response<IncomingBody>)>> {
+    ) -> impl Future<Output = crate::Result<Response<IncomingBody>>> {
         let sent = self.dispatch.send((req, req_id));
 
         async move {
@@ -171,12 +168,8 @@ where
         &mut self,
         req: Request<B>,
         req_id: RequestId,
-    ) -> impl Future<
-        Output = Result<
-            (HttpConnectionStats, Response<IncomingBody>),
-            TrySendError<(Request<B>, RequestId)>,
-        >,
-    > {
+    ) -> impl Future<Output = Result<Response<IncomingBody>, TrySendError<(Request<B>, RequestId)>>>
+    {
         let sent = self.dispatch.try_send((req, req_id));
         async move {
             match sent {
@@ -209,7 +202,7 @@ impl<B> fmt::Debug for SendRequest<B> {
 
 impl<T, B, E> Connection<T, B, E>
 where
-    T: Read + Write + Stats + Unpin + 'static,
+    T: Read + Write + Unpin + 'static,
     B: Body + Unpin + 'static,
     B::Data: Send,
     B::Error: Into<Box<dyn Error + Send + Sync>>,
@@ -231,7 +224,7 @@ where
 
 impl<T, B, E> fmt::Debug for Connection<T, B, E>
 where
-    T: Read + Write + Stats + fmt::Debug + 'static + Unpin,
+    T: Read + Write + fmt::Debug + 'static + Unpin,
     B: Body + 'static,
     E: Http2ClientConnExec<B, T> + Unpin,
     B::Error: Into<Box<dyn Error + Send + Sync>>,
@@ -243,7 +236,7 @@ where
 
 impl<T, B, E> Future for Connection<T, B, E>
 where
-    T: Read + Write + Stats + Unpin + 'static,
+    T: Read + Write + Unpin + 'static,
     B: Body + 'static + Unpin,
     B::Data: Send,
     E: Unpin,
@@ -486,7 +479,7 @@ where
         io: T,
     ) -> impl Future<Output = crate::Result<(SendRequest<B>, Connection<T, B, Ex>)>>
     where
-        T: Read + Write + Stats + Unpin,
+        T: Read + Write + Unpin,
         B: Body + 'static,
         B::Data: Send,
         B::Error: Into<Box<dyn Error + Send + Sync>>,
@@ -532,9 +525,7 @@ mod tests {
         }
 
         #[allow(unused)]
-        async fn run(
-            io: impl crate::rt::Read + crate::rt::Write + crate::rt::Stats + Unpin + 'static,
-        ) {
+        async fn run(io: impl crate::rt::Read + crate::rt::Write + Unpin + 'static) {
             let (_sender, conn) = crate::client::conn::http2::handshake::<
                 _,
                 _,
@@ -568,9 +559,7 @@ mod tests {
         }
 
         #[allow(unused)]
-        async fn run(
-            io: impl crate::rt::Read + crate::rt::Write + crate::rt::Stats + Unpin + 'static,
-        ) {
+        async fn run(io: impl crate::rt::Read + crate::rt::Write + Unpin + 'static) {
             let (_sender, conn) =
                 crate::client::conn::http2::handshake::<_, _, http_body_util::Empty<bytes::Bytes>>(
                     LocalTokioExecutor {
@@ -606,9 +595,7 @@ mod tests {
         }
 
         #[allow(unused)]
-        async fn run(
-            io: impl crate::rt::Read + crate::rt::Write + crate::rt::Stats + Unpin + 'static,
-        ) {
+        async fn run(io: impl crate::rt::Read + crate::rt::Write + Unpin + 'static) {
             let (_sender, conn) =
                 crate::client::conn::http2::handshake::<_, _, http_body_util::Empty<bytes::Bytes>>(
                     LocalTokioExecutor {
@@ -642,9 +629,7 @@ mod tests {
         }
 
         #[allow(unused)]
-        async fn run(
-            io: impl crate::rt::Read + crate::rt::Write + crate::rt::Stats + Send + Unpin + 'static,
-        ) {
+        async fn run(io: impl crate::rt::Read + crate::rt::Write + Send + Unpin + 'static) {
             let (_sender, conn) = crate::client::conn::http2::handshake::<
                 _,
                 _,
@@ -679,9 +664,7 @@ mod tests {
         }
 
         #[allow(unused)]
-        async fn run(
-            io: impl crate::rt::Read + crate::rt::Write + crate::rt::Stats + Send + Unpin + 'static,
-        ) {
+        async fn run(io: impl crate::rt::Read + crate::rt::Write + Send + Unpin + 'static) {
             let (_sender, conn) =
                 crate::client::conn::http2::handshake::<_, _, http_body_util::Empty<bytes::Bytes>>(
                     TokioExecutor {
@@ -719,9 +702,7 @@ mod tests {
         }
 
         #[allow(unused)]
-        async fn run(
-            io: impl crate::rt::Read + crate::rt::Write + crate::rt::Stats + Send + Unpin + 'static,
-        ) {
+        async fn run(io: impl crate::rt::Read + crate::rt::Write + Send + Unpin + 'static) {
             let (_sender, conn) =
                 crate::client::conn::http2::handshake::<_, _, http_body_util::Empty<bytes::Bytes>>(
                     TokioExecutor {

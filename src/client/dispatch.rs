@@ -11,11 +11,7 @@ use pin_project_lite::pin_project;
 use tokio::sync::{mpsc, oneshot};
 
 #[cfg(feature = "http2")]
-use crate::{
-    body::Incoming,
-    proto::h2::client::ResponseFutMap,
-    stats::{HttpConnectionStats, RequestId},
-};
+use crate::{body::Incoming, proto::h2::client::ResponseFutMap, stats::RequestId};
 
 pub(crate) type RetryPromise<T, U> = oneshot::Receiver<Result<U, TrySendError<T>>>;
 pub(crate) type Promise<T> = oneshot::Receiver<Result<T, crate::Error>>;
@@ -337,7 +333,7 @@ pin_project! {
         #[pin]
         pub(crate) when: ResponseFutMap<B>,
         #[pin]
-        pub(crate) call_back: Option<Callback<(Request<B>, RequestId), (HttpConnectionStats, Response<Incoming>)>>,
+        pub(crate) call_back: Option<Callback<(Request<B>, RequestId), Response<Incoming>>>,
     }
 }
 
@@ -354,8 +350,8 @@ where
         let mut call_back = this.call_back.take().expect("polled after complete");
 
         match Pin::new(&mut this.when).poll(cx) {
-            Poll::Ready(Ok((stats, res))) => {
-                call_back.send(Ok((stats, res)));
+            Poll::Ready(Ok(res)) => {
+                call_back.send(Ok(res));
                 Poll::Ready(())
             }
             Poll::Pending => {

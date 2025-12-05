@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::{
-    rt::{Read, Stats, Write},
-    stats::{HttpConnectionStats, RequestId},
+    rt::{Read, Write},
+    stats::RequestId,
 };
 use bytes::{Buf, Bytes};
 use futures_core::ready;
@@ -39,10 +39,8 @@ pub(crate) trait Dispatch {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<(Self::PollItem, Self::PollBody), Self::PollError>>>;
-    fn recv_msg(
-        &mut self,
-        msg: crate::Result<(HttpConnectionStats, Self::RecvItem, IncomingBody)>,
-    ) -> crate::Result<()>;
+    fn recv_msg(&mut self, msg: crate::Result<(Self::RecvItem, IncomingBody)>)
+        -> crate::Result<()>;
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ()>>;
     fn should_poll(&self) -> bool;
 }
@@ -59,14 +57,14 @@ cfg_server! {
 cfg_client! {
     pin_project_lite::pin_project! {
         pub(crate) struct Client<B> {
-            callback: Option<crate::client::dispatch::Callback<(Request<B>, RequestId), (HttpConnectionStats, http::Response<IncomingBody>)>>,
+            callback: Option<crate::client::dispatch::Callback<(Request<B>, RequestId), http::Response<IncomingBody>>>,
             #[pin]
             rx: ClientRx<B>,
             rx_closed: bool,
         }
     }
 
-    type ClientRx<B> = crate::client::dispatch::Receiver<(Request<B>, RequestId), (HttpConnectionStats, http::Response<IncomingBody>)>;
+    type ClientRx<B> = crate::client::dispatch::Receiver<(Request<B>, RequestId), http::Response<IncomingBody>>;
 }
 
 impl<D, Bs, I, T> Dispatcher<D, Bs, I, T>
@@ -77,7 +75,7 @@ where
             RecvItem = MessageHead<T::Incoming>,
         > + Unpin,
     D::PollError: Into<Box<dyn StdError + Send + Sync>>,
-    I: Read + Write + Stats + Unpin,
+    I: Read + Write + Unpin,
     T: Http1Transaction + Unpin,
     Bs: Body + 'static,
     Bs::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -305,8 +303,7 @@ where
                     );
                     head.extensions.insert(upgrade);
                 }
-                self.dispatch
-                    .recv_msg(Ok((self.conn.http_connection_stats(), head, body)))?;
+                self.dispatch.recv_msg(Ok((head, body)))?;
                 Poll::Ready(Ok(()))
             }
             Some(Err(err)) => {
@@ -465,7 +462,7 @@ where
             RecvItem = MessageHead<T::Incoming>,
         > + Unpin,
     D::PollError: Into<Box<dyn StdError + Send + Sync>>,
-    I: Read + Write + Stats + Unpin,
+    I: Read + Write + Unpin,
     T: Http1Transaction + Unpin,
     Bs: Body + 'static,
     Bs::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -559,8 +556,8 @@ cfg_server! {
             ret
         }
 
-        fn recv_msg(&mut self, msg: crate::Result<(HttpConnectionStats, Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
-            let (_stats, msg, body) = msg?;
+        fn recv_msg(&mut self, msg: crate::Result<(Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
+            let (msg, body) = msg?;
             let mut req = Request::new(body);
             *req.method_mut() = msg.subject.0;
             *req.uri_mut() = msg.subject.1;
@@ -647,12 +644,12 @@ cfg_client! {
             }
         }
 
-        fn recv_msg(&mut self, msg: crate::Result<(HttpConnectionStats, Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
+        fn recv_msg(&mut self, msg: crate::Result<(Self::RecvItem, IncomingBody)>) -> crate::Result<()> {
             match msg {
-                Ok((stats, msg, body)) => {
+                Ok((msg, body)) => {
                     if let Some(cb) = self.callback.take() {
                         let res = msg.into_response(body);
-                        cb.send(Ok((stats, res)));
+                        cb.send(Ok(res));
                         Ok(())
                     } else {
                         // Getting here is likely a bug! An error should have happened
