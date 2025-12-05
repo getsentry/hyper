@@ -190,7 +190,10 @@ async fn http1_client(url: hyper::Uri) -> Result<(), Box<dyn std::error::Error>>
             .header(hyper::header::HOST, authority.as_str())
             .body(Body::from("test".to_string()))?;
 
-        let mut res = sender.send_request(req).await?.1;
+        let mut res = sender
+            .send_request(req, hyper::stats::next_request_id())
+            .await?
+            .1;
 
         let mut stdout = io::stdout();
         stdout
@@ -291,7 +294,10 @@ async fn http2_client(url: hyper::Uri) -> Result<(), Box<dyn std::error::Error>>
             .header(hyper::header::HOST, authority.as_str())
             .body(Body::from("test".to_string()))?;
 
-        let mut res = sender.send_request(req).await?.1;
+        let mut res = sender
+            .send_request(req, hyper::stats::next_request_id())
+            .await?
+            .1;
 
         let mut stdout = io::stdout();
         stdout

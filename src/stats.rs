@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use http::Uri;
 use lazy_static::lazy_static;
 use std::{
-    sync::atomic::AtomicU64,
+    sync::{atomic::AtomicU64, Arc},
     time::{Instant, SystemTime},
 };
 
@@ -343,7 +343,7 @@ impl RequestStatsInternal {
 
     /// Gets the request id for the redirect triggered by this request.
     pub fn redirect(&self) -> Option<RequestId> {
-        self.redirect
+        self.redirect.clone()
     }
 }
 
@@ -351,7 +351,12 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Gets the next available request id.
 pub fn next_request_id() -> RequestId {
-    RequestId(REQUEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    RequestId::new(REQUEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Returns the current size of the request stats map
+pub fn stats_size() -> usize {
+    REQUEST_STATS.len()
 }
 
 // Get the logical 'finished' time for a request, given that it might
@@ -401,7 +406,7 @@ pub fn consume_request_stats(req_id: RequestId) -> RequestStats {
     let mut some_req_id = Some(req_id);
 
     while let Some(req_id) = some_req_id {
-        let Some((_, stats)) = REQUEST_STATS.remove(&req_id) else {
+        let Some((_, stats)) = REQUEST_STATS.remove(&req_id.handle.0) else {
             break;
         };
 
@@ -424,23 +429,34 @@ pub fn consume_request_stats(req_id: RequestId) -> RequestStats {
 
 /// Get the current RequestStatsInternal for the specified ID.
 pub fn get_request_stats<'a>(
-    req_id: RequestId,
-) -> dashmap::mapref::one::RefMut<'a, RequestId, RequestStatsInternal> {
-    REQUEST_STATS.entry(req_id).or_default()
+    req_id: &RequestId,
+) -> dashmap::mapref::one::RefMut<'a, u64, RequestStatsInternal> {
+    REQUEST_STATS.entry(req_id.handle.0).or_default()
 }
 
-#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
 /// The unique id for a request.
-pub struct RequestId(u64);
+pub struct RequestId {
+    handle: Arc<RequestIdHandle>,
+}
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+struct RequestIdHandle(u64);
+
+impl Drop for RequestIdHandle {
+    fn drop(&mut self) {
+        REQUEST_STATS.remove(&self.0);
+    }
+}
 
 impl RequestId {
-    /// Returns the reserved invalid ID.
-    pub fn invalid() -> Self {
-        RequestId(0)
+    fn new(value: u64) -> Self {
+        Self {
+            handle: Arc::new(RequestIdHandle(value)),
+        }
     }
 }
 
 lazy_static! {
-    static ref REQUEST_STATS: dashmap::DashMap<RequestId, RequestStatsInternal> =
+    static ref REQUEST_STATS: dashmap::DashMap<u64, RequestStatsInternal> =
         DashMap::with_capacity(5000);
 }

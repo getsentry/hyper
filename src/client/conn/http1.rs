@@ -227,14 +227,14 @@ where
     ) -> impl Future<Output = Result<Response<IncomingBody>, TrySendError<(Request<B>, RequestId)>>>
     {
         let sent_time = std::time::Instant::now();
-        let sent = self.dispatch.try_send((req, req_id));
-        crate::stats::get_request_stats(req_id).set_request_sent_time(sent_time);
+        let sent = self.dispatch.try_send((req, req_id.clone()));
+        crate::stats::get_request_stats(&req_id).set_request_sent_time(sent_time);
         async move {
             match sent {
                 Ok(rx) => match rx.await {
                     Ok(Ok(res)) => {
                         let recv_time = std::time::Instant::now();
-                        crate::stats::get_request_stats(req_id).set_response_start_time(recv_time);
+                        crate::stats::get_request_stats(&req_id).set_response_start_time(recv_time);
                         Ok(res)
                     }
                     Ok(Err(err)) => Err(err),
