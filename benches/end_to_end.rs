@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use futures_util::future::join_all;
 
 use http_body_util::BodyExt;
-use hyper::{Method, Request, Response};
+use hyper::{stats, Method, Request, Response};
 
 type BoxedBody = http_body_util::combinators::BoxBody<bytes::Bytes, Infallible>;
 
@@ -369,15 +369,15 @@ impl Opts {
 
         let mut send_request = |req| {
             let fut = match client {
-                Client::Http1(ref mut tx) => {
-                    futures_util::future::Either::Left(tx.send_request(req))
-                }
-                Client::Http2(ref mut tx) => {
-                    futures_util::future::Either::Right(tx.send_request(req))
-                }
+                Client::Http1(ref mut tx) => futures_util::future::Either::Left(
+                    tx.send_request(req, stats::next_request_id()),
+                ),
+                Client::Http2(ref mut tx) => futures_util::future::Either::Right(
+                    tx.send_request(req, stats::next_request_id()),
+                ),
             };
             async {
-                let res = fut.await.expect("client wait").1;
+                let res = fut.await.expect("client wait");
                 let mut body = res.into_body();
                 while let Some(_chunk) = body.frame().await {}
             }

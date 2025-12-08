@@ -1,9 +1,14 @@
 //! Stats for http requests.
 use crate::rt::ConnectionStats;
+use dashmap::DashMap;
 use http::Uri;
-use std::time::{Instant, SystemTime};
+use lazy_static::lazy_static;
+use std::{
+    sync::{atomic::AtomicU64, Arc},
+    time::{Instant, SystemTime},
+};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 /// Http-related request stats (including connection stats)
 pub struct HttpConnectionStats {
     /// The approximate instant the first body byte was received.
@@ -42,7 +47,7 @@ impl HttpConnectionStats {
             .unwrap()
             .as_micros();
         Self {
-            connection_stats: Some(ConnectionStats::new(now, now_timestamp, now, now, now, now)),
+            connection_stats: Some(ConnectionStats::new(Some(now), now_timestamp, None, None)),
             first_body_byte_time: Some(now),
             request_sent_time: None,
             response_start_time: None,
@@ -61,16 +66,7 @@ impl HttpConnectionStats {
     }
 }
 
-impl std::fmt::Display for HttpConnectionStats {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(c) = self.connection_stats {
-            c.fmt(f)?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 /// Container struct for redirect stats, which are just http connection stats,
 /// along with the time the redirect finished.
 pub struct RedirectStats {
@@ -159,13 +155,13 @@ impl RedirectStats {
     }
 
     /// Returns the instant when this request approximately started
-    pub fn get_request_sent(&self) -> Instant {
-        self.http_stats.request_sent_time.unwrap()
+    pub fn get_request_sent(&self) -> Option<Instant> {
+        self.http_stats.request_sent_time
     }
 
     /// Returns the instant when this request approximately started
-    pub fn get_response_start(&self) -> Instant {
-        self.http_stats.response_start_time.unwrap()
+    pub fn get_response_start(&self) -> Option<Instant> {
+        self.http_stats.response_start_time
     }
 
     /// Gets the time  that the first body byte was received.
@@ -179,16 +175,7 @@ impl RedirectStats {
     }
 }
 
-impl std::fmt::Display for RedirectStats {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.http_stats.fmt(f)?;
-
-        f.write_fmt(format_args!("next redirect: {:?}", self.finished))?;
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 /// Connection and request-level stats for a http request.
 pub struct RequestStats {
     redirects: Vec<RedirectStats>,
@@ -231,4 +218,245 @@ impl RequestStats {
     pub fn redirects(&self) -> &Vec<RedirectStats> {
         &self.redirects
     }
+}
+
+#[derive(Clone, Debug)]
+/// Connection and request-level stats for a http request.
+pub struct RequestStatsInternal {
+    redirect: Option<RequestId>,
+    http_stats: HttpConnectionStats,
+    poll_start: Instant,
+    poll_start_timestamp: u128,
+    finished: Option<Instant>,
+    url: Uri,
+    status_code: u16,
+    request_body_size: u32,
+    certificate: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+/// Absolute duration for a connection stat.
+pub struct AbsoluteDuration {
+    start: Instant,
+    end: Instant,
+}
+
+impl AbsoluteDuration {
+    /// Constructor
+    pub fn new(start: Instant, end: Instant) -> Self {
+        Self { start, end }
+    }
+
+    /// Starting instant.
+    pub fn start(&self) -> &Instant {
+        &self.start
+    }
+
+    /// Ending instant.
+    pub fn end(&self) -> &Instant {
+        &self.end
+    }
+}
+
+impl Default for RequestStatsInternal {
+    fn default() -> Self {
+        Self {
+            redirect: Default::default(),
+            http_stats: Default::default(),
+            poll_start: Instant::now(),
+            poll_start_timestamp: Default::default(),
+            finished: Default::default(),
+            url: Default::default(),
+            status_code: Default::default(),
+            request_body_size: Default::default(),
+            certificate: Default::default(),
+        }
+    }
+}
+
+impl RequestStatsInternal {
+    /// Sets connection stats.
+    pub fn set_connection_stats(&mut self, cs: ConnectionStats) {
+        self.http_stats.connection_stats = Some(cs);
+    }
+
+    /// Sets TLS stats.
+    pub fn set_tls_connect(&mut self, tls_connect: AbsoluteDuration) {
+        if let Some(conn_stats) = &mut self.http_stats.connection_stats {
+            *conn_stats = ConnectionStats::tls_new(*conn_stats, tls_connect);
+        }
+    }
+
+    /// Sets the request start time.
+    pub fn set_request_sent_time(&mut self, request_sent_time: Instant) {
+        self.http_stats.request_sent_time = Some(request_sent_time);
+    }
+
+    /// Sets the response start time.
+    pub fn set_response_start_time(&mut self, response_start_time: Instant) {
+        self.http_stats.response_start_time = Some(response_start_time);
+    }
+
+    /// Sets the time the entire request finished.
+    pub fn set_finished(&mut self, finished: Instant) -> &mut Self {
+        self.finished = Some(finished);
+        self
+    }
+
+    /// Sets the request ID of the redirect triggered by this request.
+    pub fn set_redirect(&mut self, next_req: RequestId) -> &mut Self {
+        self.redirect = Some(next_req);
+        self
+    }
+
+    /// Sets the https status code of this request.
+    pub fn set_status_code(&mut self, code: u16) -> &mut Self {
+        self.status_code = code;
+        self
+    }
+
+    /// Sets the time the future for this request started polling; practically, this is
+    /// the very first thing that can happen in a request.
+    pub fn set_poll_start(&mut self, poll_start: Instant, poll_start_timestamp: u128) -> &mut Self {
+        self.poll_start = poll_start;
+        self.poll_start_timestamp = poll_start_timestamp;
+        self
+    }
+
+    /// Sets the url of this request.
+    pub fn set_url(&mut self, url: Uri) -> &mut Self {
+        self.url = url;
+        self
+    }
+
+    /// Sets the size of the body for this request.
+    pub fn set_request_body_size(&mut self, request_body_size: u32) -> &mut Self {
+        self.request_body_size = request_body_size;
+        self
+    }
+
+    /// Sets the cretificate blob for this request.
+    pub fn set_certificate(&mut self, certificate: Option<Vec<u8>>) -> &mut Self {
+        self.certificate = certificate;
+        self
+    }
+
+    /// Gets the request id for the redirect triggered by this request.
+    pub fn redirect(&self) -> Option<RequestId> {
+        self.redirect.clone()
+    }
+}
+
+static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Gets the next available request id.
+pub fn next_request_id() -> RequestId {
+    RequestId::new(REQUEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Returns the current size of the request stats map
+pub fn stats_size() -> usize {
+    REQUEST_STATS.len()
+}
+
+// Get the logical 'finished' time for a request, given that it might
+// not have completed sucessfully.
+fn extract_finished(s: &RequestStatsInternal) -> Instant {
+    if let Some(f) = s.finished {
+        return f;
+    }
+
+    if let Some(f) = s.http_stats.first_body_byte_time {
+        return f;
+    }
+
+    if let Some(f) = s.http_stats.response_start_time {
+        return f;
+    }
+
+    if let Some(f) = s.http_stats.request_sent_time {
+        return f;
+    }
+
+    if let Some(c) = s.http_stats.connection_stats {
+        if let Some(d) = c.get_tls_connect() {
+            return d.end;
+        }
+        if let Some(d) = c.get_connect() {
+            return d.end;
+        }
+        if let Some(d) = c.get_dns_resolve() {
+            return d.end;
+        }
+        if let Some(f) = c.get_start_instant() {
+            return f;
+        }
+    }
+
+    return s.poll_start;
+}
+
+/// Retrieve the RequestStats for the specified request id.  The RequestStats object
+/// will be empty if the request is not found.  All redirects will be included in the
+/// reponse, and subsequent 'consume_request_stats' calls for the same id will return
+/// an empty RequestStats object.
+pub fn consume_request_stats(req_id: RequestId) -> RequestStats {
+    let mut redirects = vec![];
+
+    let mut some_req_id = Some(req_id);
+
+    while let Some(req_id) = some_req_id {
+        let Some((_, stats)) = REQUEST_STATS.remove(&req_id.handle.0) else {
+            break;
+        };
+
+        redirects.push(RedirectStats {
+            finished: extract_finished(&stats),
+            poll_start: stats.poll_start,
+            poll_start_timestamp: stats.poll_start_timestamp,
+            http_stats: stats.http_stats,
+            status_code: stats.status_code,
+            url: stats.url,
+            request_body_size: stats.request_body_size,
+            certificate: stats.certificate,
+        });
+
+        some_req_id = stats.redirect;
+    }
+
+    RequestStats { redirects }
+}
+
+/// Get the current RequestStatsInternal for the specified ID.
+pub fn get_request_stats<'a>(
+    req_id: &RequestId,
+) -> dashmap::mapref::one::RefMut<'a, u64, RequestStatsInternal> {
+    REQUEST_STATS.entry(req_id.handle.0).or_default()
+}
+
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+/// The unique id for a request.
+pub struct RequestId {
+    handle: Arc<RequestIdHandle>,
+}
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+struct RequestIdHandle(u64);
+
+impl Drop for RequestIdHandle {
+    fn drop(&mut self) {
+        REQUEST_STATS.remove(&self.0);
+    }
+}
+
+impl RequestId {
+    fn new(value: u64) -> Self {
+        Self {
+            handle: Arc::new(RequestIdHandle(value)),
+        }
+    }
+}
+
+lazy_static! {
+    static ref REQUEST_STATS: dashmap::DashMap<u64, RequestStatsInternal> =
+        DashMap::with_capacity(5000);
 }

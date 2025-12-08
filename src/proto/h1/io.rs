@@ -4,8 +4,6 @@ use std::io::{self, IoSlice};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::rt::ConnectionStats;
-use crate::rt::Stats;
 use crate::rt::{Read, ReadBuf, Write};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures_core::ready;
@@ -55,7 +53,7 @@ where
 
 impl<T, B> Buffered<T, B>
 where
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
     B: Buf,
 {
     pub(crate) fn new(io: T) -> Buffered<T, B> {
@@ -83,10 +81,6 @@ where
         if enabled {
             self.set_write_strategy_flatten();
         }
-    }
-
-    pub(crate) fn connection_stats(&mut self) -> Option<ConnectionStats> {
-        self.io.stats()
     }
 
     pub(crate) fn set_max_buf_size(&mut self, max: usize) {
@@ -178,7 +172,7 @@ where
         record_time: bool,
         cx: &mut Context<'_>,
         parse_ctx: ParseContext<'_>,
-    ) -> Poll<crate::Result<(Option<std::time::Instant>, ParsedMessage<S::Incoming>)>>
+    ) -> Poll<crate::Result<ParsedMessage<S::Incoming>>>
     where
         S: Http1Transaction,
     {
@@ -203,7 +197,7 @@ where
                 Some(msg) => {
                     debug!("parsed {} headers", msg.head.headers.len());
                     self.partial_len = None;
-                    return Poll::Ready(Ok((fbt, msg)));
+                    return Poll::Ready(Ok(msg));
                 }
                 None => {
                     let max = self.read_buf_strategy.max();
@@ -362,7 +356,7 @@ pub(crate) trait MemRead {
 
 impl<T, B> MemRead for Buffered<T, B>
 where
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
     B: Buf,
 {
     fn read_mem(&mut self, cx: &mut Context<'_>, len: usize) -> Poll<io::Result<Bytes>> {

@@ -6,7 +6,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::rt::{Read, Stats, Write};
+use crate::rt::{Read, Write};
+use crate::stats::RequestId;
 use bytes::Bytes;
 use futures_core::ready;
 use http::{Request, Response};
@@ -14,14 +15,14 @@ use httparse::ParserConfig;
 
 use super::super::dispatch::{self, TrySendError};
 use crate::body::{Body, Incoming as IncomingBody};
-use crate::{proto, stats::HttpConnectionStats};
+use crate::proto;
 
 type Dispatcher<T, B> =
     proto::dispatch::Dispatcher<proto::dispatch::Client<B>, B, T, proto::h1::ClientTransaction>;
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {
-    dispatch: dispatch::Sender<Request<B>, (HttpConnectionStats, Response<IncomingBody>)>,
+    dispatch: dispatch::Sender<(Request<B>, RequestId), Response<IncomingBody>>,
 }
 
 /// Deconstructed parts of a `Connection`.
@@ -61,7 +62,7 @@ where
 
 impl<T, B> Connection<T, B>
 where
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
@@ -126,7 +127,7 @@ pub struct Builder {
 /// See [`client::conn`](crate::client::conn) for more.
 pub async fn handshake<T, B>(io: T) -> crate::Result<(SendRequest<B>, Connection<T, B>)>
 where
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
     B: Body + 'static,
     B::Data: Send,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -191,8 +192,9 @@ where
     pub fn send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = crate::Result<(HttpConnectionStats, Response<IncomingBody>)>> {
-        let sent = self.dispatch.send(req);
+        req_id: RequestId,
+    ) -> impl Future<Output = crate::Result<Response<IncomingBody>>> {
+        let sent = self.dispatch.send((req, req_id));
 
         async move {
             match sent {
@@ -221,18 +223,19 @@ where
     pub fn try_send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<
-        Output = Result<(HttpConnectionStats, Response<IncomingBody>), TrySendError<Request<B>>>,
-    > {
-        let sent = self.dispatch.try_send(req);
+        req_id: RequestId,
+    ) -> impl Future<Output = Result<Response<IncomingBody>, TrySendError<(Request<B>, RequestId)>>>
+    {
         let sent_time = std::time::Instant::now();
+        let sent = self.dispatch.try_send((req, req_id.clone()));
+        crate::stats::get_request_stats(&req_id).set_request_sent_time(sent_time);
         async move {
             match sent {
                 Ok(rx) => match rx.await {
-                    Ok(Ok((mut stats, res))) => {
+                    Ok(Ok(res)) => {
                         let recv_time = std::time::Instant::now();
-                        stats.set_request_times(sent_time, recv_time);
-                        Ok((stats, res))
+                        crate::stats::get_request_stats(&req_id).set_response_start_time(recv_time);
+                        Ok(res)
                     }
                     Ok(Err(err)) => Err(err),
                     // this is definite bug if it happens, but it shouldn't happen!
@@ -261,7 +264,7 @@ impl<B> fmt::Debug for SendRequest<B> {
 
 impl<T, B> Connection<T, B>
 where
-    T: Read + Write + Stats + Unpin + Send,
+    T: Read + Write + Unpin + Send,
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
@@ -285,7 +288,7 @@ where
 
 impl<T, B> Future for Connection<T, B>
 where
-    T: Read + Write + Stats + Unpin,
+    T: Read + Write + Unpin,
     B: Body + 'static,
     B::Data: Send,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -523,7 +526,7 @@ impl Builder {
         io: T,
     ) -> impl Future<Output = crate::Result<(SendRequest<B>, Connection<T, B>)>>
     where
-        T: Read + Write + Stats + Unpin,
+        T: Read + Write + Unpin,
         B: Body + 'static,
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -587,7 +590,7 @@ mod upgrades {
     #[allow(missing_debug_implementations)]
     pub struct UpgradeableConnection<T, B>
     where
-        T: Read + Write + Stats + Unpin + Send + 'static,
+        T: Read + Write + Unpin + Send + 'static,
         B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
     {
@@ -596,7 +599,7 @@ mod upgrades {
 
     impl<I, B> Future for UpgradeableConnection<I, B>
     where
-        I: Read + Write + Stats + Unpin + Send + 'static,
+        I: Read + Write + Unpin + Send + 'static,
         B: Body + 'static,
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,

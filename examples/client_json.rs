@@ -3,7 +3,7 @@
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty};
-use hyper::{body::Buf, Request};
+use hyper::{body::Buf, stats, Request};
 use serde::Deserialize;
 use tokio::net::TcpStream;
 
@@ -50,7 +50,7 @@ async fn fetch_json(url: hyper::Uri) -> Result<Vec<User>> {
         .header(hyper::header::HOST, authority.as_str())
         .body(Empty::<Bytes>::new())?;
 
-    let res = sender.send_request(req).await?.1;
+    let res = sender.send_request(req, stats::next_request_id()).await?;
 
     // asynchronously aggregate the chunks of the body
     let body = res.collect().await?.aggregate();

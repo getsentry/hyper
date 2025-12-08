@@ -352,7 +352,7 @@ macro_rules! test {
             }
             *req.uri_mut() = builder.build().unwrap();
 
-            let mut resp = sender.send_request(req).await?.1;
+            let mut resp = sender.send_request(req, hyper::stats::next_request_id()).await?;
 
             resp.extensions_mut().insert(extra);
             Ok(resp)
@@ -1504,7 +1504,7 @@ mod conn {
     use hyper::body::{Body, Frame};
     use hyper::client::conn;
     use hyper::upgrade::OnUpgrade;
-    use hyper::{Method, Request, Response, StatusCode};
+    use hyper::{stats, Method, Request, Response, StatusCode};
 
     use super::{concat, s, support, tcp_connect, FutureHyperExt};
 
@@ -1562,7 +1562,10 @@ mod conn {
                 .uri("/a")
                 .body(Empty::<Bytes>::new())
                 .unwrap();
-            let mut res = client.send_request(req).await.expect("send_request").1;
+            let mut res = client
+                .send_request(req, stats::next_request_id())
+                .await
+                .expect("send_request");
             assert_eq!(res.status(), hyper::StatusCode::OK);
             assert!(res.body_mut().frame().await.is_none());
         };
@@ -1602,7 +1605,10 @@ mod conn {
                 .uri("/a")
                 .body(Empty::<Bytes>::new())
                 .unwrap();
-            let mut res = client.send_request(req).await.expect("send_request").1;
+            let mut res = client
+                .send_request(req, stats::next_request_id())
+                .await
+                .expect("send_request");
             assert_eq!(res.status(), hyper::StatusCode::OK);
             assert_eq!(
                 res.extensions()
@@ -1655,12 +1661,14 @@ mod conn {
             .uri("/")
             .body(Empty::<Bytes>::new())
             .unwrap();
-        let res = client.send_request(req).and_then(move |(_, mut res)| {
-            assert_eq!(res.status(), hyper::StatusCode::OK);
-            assert_eq!(res.body().size_hint().exact(), Some(5));
-            assert!(!res.body().is_end_stream());
-            poll_fn(move |ctx| Pin::new(res.body_mut()).poll_frame(ctx)).map(Option::unwrap)
-        });
+        let res = client
+            .send_request(req, stats::next_request_id())
+            .and_then(move |mut res| {
+                assert_eq!(res.status(), hyper::StatusCode::OK);
+                assert_eq!(res.body().size_hint().exact(), Some(5));
+                assert!(!res.body().is_end_stream());
+                poll_fn(move |ctx| Pin::new(res.body_mut()).poll_frame(ctx)).map(Option::unwrap)
+            });
 
         let rx = rx1.expect("thread panicked");
         let rx = rx.then(|_| TokioTimer.sleep(Duration::from_millis(200)));
@@ -1717,7 +1725,7 @@ mod conn {
             .uri("/")
             .body(StreamBody::new(recv))
             .unwrap();
-        let res = client.send_request(req);
+        let res = client.send_request(req, stats::next_request_id());
         rt.block_on(res).unwrap_err();
 
         server.join().expect("server thread panicked");
@@ -1760,10 +1768,12 @@ mod conn {
             .body(Empty::<Bytes>::new())
             .unwrap();
 
-        let res = client.send_request(req).and_then(move |(_, res)| {
-            assert_eq!(res.status(), hyper::StatusCode::OK);
-            concat(res)
-        });
+        let res = client
+            .send_request(req, stats::next_request_id())
+            .and_then(move |res| {
+                assert_eq!(res.status(), hyper::StatusCode::OK);
+                concat(res)
+            });
         let rx = rx1.expect("thread panicked");
         let rx = rx.then(|_| TokioTimer.sleep(Duration::from_millis(200)));
         rt.block_on(future::join(res, rx).map(|r| r.0)).unwrap();
@@ -1805,10 +1815,12 @@ mod conn {
             .body(Empty::<Bytes>::new())
             .unwrap();
 
-        let res = client.send_request(req).and_then(move |(_, res)| {
-            assert_eq!(res.status(), hyper::StatusCode::OK);
-            concat(res)
-        });
+        let res = client
+            .send_request(req, stats::next_request_id())
+            .and_then(move |res| {
+                assert_eq!(res.status(), hyper::StatusCode::OK);
+                concat(res)
+            });
         let rx = rx1.expect("thread panicked");
         let rx = rx.then(|_| TokioTimer.sleep(Duration::from_millis(200)));
         rt.block_on(future::join(res, rx).map(|r| r.0)).unwrap();
@@ -1844,21 +1856,25 @@ mod conn {
             .uri("/a")
             .body(Empty::<Bytes>::new())
             .unwrap();
-        let res1 = client.send_request(req).and_then(move |(_, res)| {
-            assert_eq!(res.status(), hyper::StatusCode::OK);
-            concat(res)
-        });
+        let res1 = client
+            .send_request(req, stats::next_request_id())
+            .and_then(move |res| {
+                assert_eq!(res.status(), hyper::StatusCode::OK);
+                concat(res)
+            });
 
         // pipelined request will hit NotReady, and thus should return an Error::Cancel
         let req = Request::builder()
             .uri("/b")
             .body(Empty::<Bytes>::new())
             .unwrap();
-        let res2 = client.send_request(req).map(|result| {
-            let err = result.expect_err("res2");
-            assert!(err.is_canceled(), "err not canceled, {:?}", err);
-            Ok::<_, ()>(())
-        });
+        let res2 = client
+            .send_request(req, stats::next_request_id())
+            .map(|result| {
+                let err = result.expect_err("res2");
+                assert!(err.is_canceled(), "err not canceled, {:?}", err);
+                Ok::<_, ()>(())
+            });
 
         let rx = rx1.expect("thread panicked");
         let rx = rx.then(|_| TokioTimer.sleep(Duration::from_millis(200)));
@@ -1912,11 +1928,13 @@ mod conn {
                 .uri("/a")
                 .body(Empty::<Bytes>::new())
                 .unwrap();
-            let res = client.send_request(req).and_then(move |(_, res)| {
-                assert_eq!(res.status(), hyper::StatusCode::SWITCHING_PROTOCOLS);
-                assert_eq!(res.headers()["Upgrade"], "foobar");
-                concat(res)
-            });
+            let res = client
+                .send_request(req, stats::next_request_id())
+                .and_then(move |res| {
+                    assert_eq!(res.status(), hyper::StatusCode::SWITCHING_PROTOCOLS);
+                    assert_eq!(res.headers()["Upgrade"], "foobar");
+                    concat(res)
+                });
 
             let rx = rx1.expect("thread panicked");
             let rx = rx.then(|_| TokioTimer.sleep(Duration::from_millis(200)));
@@ -1998,8 +2016,8 @@ mod conn {
                 .body(Empty::<Bytes>::new())
                 .unwrap();
             let res = client
-                .send_request(req)
-                .and_then(move |(_, res)| {
+                .send_request(req, stats::next_request_id())
+                .and_then(move |res| {
                     assert_eq!(res.status(), hyper::StatusCode::OK);
                     concat(res)
                 })
@@ -2095,7 +2113,10 @@ mod conn {
             .uri("/a")
             .body(Empty::<Bytes>::new())
             .unwrap();
-        let _res = client.send_request(req).await.expect("send_request");
+        let _res = client
+            .send_request(req, stats::next_request_id())
+            .await
+            .expect("send_request");
     }
 
     #[tokio::test]
@@ -2134,7 +2155,10 @@ mod conn {
             assert_eq!(res.status(), 100);
             cnt2.fetch_add(1, Ordering::Relaxed);
         });
-        let _res = client.send_request(req).await.expect("send_request");
+        let _res = client
+            .send_request(req, stats::next_request_id())
+            .await
+            .expect("send_request");
         assert_eq!(1, cnt.load(Ordering::Relaxed));
     }
 
@@ -2169,7 +2193,9 @@ mod conn {
             assert!(client.is_ready());
 
             // use the connection once
-            let mut fut1 = std::pin::pin!(client.send_request(http::Request::new(Empty::new())));
+            let mut fut1 = std::pin::pin!(
+                client.send_request(http::Request::new(Empty::new()), stats::next_request_id())
+            );
             let _res1 = future::poll_fn(|cx| loop {
                 if let Poll::Ready(res) = fut1.as_mut().poll(cx) {
                     return Poll::Ready(res);
@@ -2190,7 +2216,8 @@ mod conn {
             tokio::task::yield_now().await;
 
             let mut fut2 =
-                std::pin::pin!(client.try_send_request(http::Request::new(Empty::new())));
+                std::pin::pin!(client
+                    .try_send_request(http::Request::new(Empty::new()), stats::next_request_id()));
             let poll1 = future::poll_fn(|cx| Poll::Ready(fut2.as_mut().poll(cx))).await;
             assert!(poll1.is_pending(), "not already known to error");
 
@@ -2283,7 +2310,10 @@ mod conn {
             .body(Empty::<Bytes>::new())
             .expect("request builder");
 
-        client.send_request(req).await.expect("req1 send");
+        client
+            .send_request(req, stats::next_request_id())
+            .await
+            .expect("req1 send");
 
         // Sanity check that client is STILL ready
         future::poll_fn(|ctx| client.poll_ready(ctx))
@@ -2362,7 +2392,10 @@ mod conn {
                 .body(Empty::<Bytes>::new())
                 .expect("request builder");
 
-            let resp = client.send_request(req).await.expect("req1 send").1;
+            let resp = client
+                .send_request(req, stats::next_request_id())
+                .await
+                .expect("req1 send");
             assert_eq!(resp.status(), 200);
             let upgrade = hyper::upgrade::on(resp).await.unwrap();
             tokio::task::spawn(async move {
@@ -2470,7 +2503,7 @@ mod conn {
 
         let req = http::Request::new(Empty::<Bytes>::new());
         let err = client
-            .send_request(req)
+            .send_request(req, stats::next_request_id())
             .await
             .expect_err("request should timeout");
         assert!(err.is_timeout());
@@ -2530,7 +2563,10 @@ mod conn {
         let (_tx, recv) = mpsc::channel::<Result<Frame<Bytes>, Box<dyn Error + Send + Sync>>>(0);
         let req = http::Request::new(StreamBody::new(recv));
 
-        let _resp = client.send_request(req).await.expect("send_request");
+        let _resp = client
+            .send_request(req, stats::next_request_id())
+            .await
+            .expect("send_request");
 
         // sleep longer than keepalive would trigger
         TokioTimer.sleep(Duration::from_secs(4)).await;
@@ -2582,7 +2618,10 @@ mod conn {
         // Use a channel to keep request stream open
         let (_tx, recv) = mpsc::channel::<Result<Frame<Bytes>, Box<dyn Error + Send + Sync>>>(0);
         let req = Request::post("/a").body(StreamBody::new(recv)).unwrap();
-        let resp = client.send_request(req).await.expect("send_request").1;
+        let resp = client
+            .send_request(req, stats::next_request_id())
+            .await
+            .expect("send_request");
         assert!(resp.status().is_success());
 
         let mut body = String::new();
@@ -2637,7 +2676,10 @@ mod conn {
         let req = Request::connect("localhost")
             .body(Empty::<Bytes>::new())
             .unwrap();
-        let res = client.send_request(req).await.expect("send_request").1;
+        let res = client
+            .send_request(req, stats::next_request_id())
+            .await
+            .expect("send_request");
         assert_eq!(res.status(), StatusCode::OK);
 
         let mut upgraded = TokioIo::new(hyper::upgrade::on(res).await.unwrap());
@@ -2685,7 +2727,10 @@ mod conn {
         });
 
         let req = Request::connect("localhost").body(Empty::new()).unwrap();
-        let res = client.send_request(req).await.expect("send_request").1;
+        let res = client
+            .send_request(req, stats::next_request_id())
+            .await
+            .expect("send_request");
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         assert!(res.extensions().get::<OnUpgrade>().is_none());
 
@@ -2729,7 +2774,10 @@ mod conn {
             ))
             .unwrap();
 
-        let error = client.send_request(req).await.unwrap_err();
+        let error = client
+            .send_request(req, stats::next_request_id())
+            .await
+            .unwrap_err();
 
         assert!(error.is_user());
     }
@@ -2748,12 +2796,6 @@ mod conn {
     struct DebugStream {
         tcp: TokioIo<TcpStream>,
         shutdown_called: bool,
-    }
-
-    impl hyper::rt::Stats for DebugStream {
-        fn stats(&mut self) -> Option<hyper::rt::ConnectionStats> {
-            None
-        }
     }
 
     impl hyper::rt::Write for DebugStream {

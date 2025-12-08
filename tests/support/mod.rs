@@ -8,7 +8,7 @@ use std::sync::{
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
-use hyper::server;
+use hyper::{server, stats};
 use tokio::net::{TcpListener, TcpStream};
 
 use hyper::service::service_fn;
@@ -442,7 +442,10 @@ async fn async_test(cfg: __TestConfig) {
                         panic!("{:?}", err);
                     }
                 });
-                sender.send_request(req).await.unwrap()
+                sender
+                    .send_request(req, stats::next_request_id())
+                    .await
+                    .unwrap()
             } else {
                 let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
                     .handshake(io)
@@ -454,9 +457,11 @@ async fn async_test(cfg: __TestConfig) {
                         panic!("{:?}", err);
                     }
                 });
-                sender.send_request(req).await.unwrap()
-            }
-            .1;
+                sender
+                    .send_request(req, stats::next_request_id())
+                    .await
+                    .unwrap()
+            };
 
             assert_eq!(res.status(), cstatus, "server status");
             assert_eq!(res.version(), version, "server version");
@@ -545,7 +550,7 @@ async fn naive_proxy(cfg: ProxyConfig) -> (SocketAddr, impl Future<Output = ()>)
                                 }
                             });
 
-                            sender.send_request(req).await?
+                            sender.send_request(req, stats::next_request_id()).await?
                         } else {
                             let builder = hyper::client::conn::http1::Builder::new();
                             let (mut sender, conn) = builder.handshake(io).await.unwrap();
@@ -556,9 +561,8 @@ async fn naive_proxy(cfg: ProxyConfig) -> (SocketAddr, impl Future<Output = ()>)
                                 }
                             });
 
-                            sender.send_request(req).await?
-                        }
-                        .1;
+                            sender.send_request(req, stats::next_request_id()).await?
+                        };
 
                         let (mut parts, body) = resp.into_parts();
 

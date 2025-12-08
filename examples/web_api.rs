@@ -6,6 +6,7 @@ use bytes::{Buf, Bytes};
 use http_body_util::{BodyExt, Full};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
+use hyper::stats;
 use hyper::{body::Incoming as IncomingBody, header, Method, Request, Response, StatusCode};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -44,7 +45,7 @@ async fn client_request_response() -> Result<Response<BoxBody>> {
         }
     });
 
-    let web_res = sender.send_request(req).await?.1;
+    let web_res = sender.send_request(req, stats::next_request_id()).await?;
 
     let res_body = web_res.into_body().boxed();
 
