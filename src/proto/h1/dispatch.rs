@@ -710,6 +710,7 @@ mod tests {
     use super::*;
     use crate::common::io::Compat;
     use crate::proto::h1::ClientTransaction;
+    use crate::stats;
     use std::time::Duration;
 
     #[test]
@@ -733,7 +734,10 @@ mod tests {
             handle.read(b"HTTP/1.1 200 OK\r\n\r\n");
 
             let mut res_rx = tx
-                .try_send(crate::Request::new(IncomingBody::empty()))
+                .try_send((
+                    crate::Request::new(IncomingBody::empty()),
+                    stats::next_request_id(),
+                ))
                 .unwrap();
 
             tokio_test::assert_ready_ok!(Pin::new(&mut dispatcher).poll(cx));
@@ -773,7 +777,11 @@ mod tests {
 
         let req = crate::Request::builder().method("POST").body(body).unwrap();
 
-        let res = tx.try_send(req).unwrap().await.expect("response");
+        let res = tx
+            .try_send((req, stats::next_request_id()))
+            .unwrap()
+            .await
+            .expect("response");
         drop(res);
 
         assert!(!tx.is_ready());
@@ -802,7 +810,9 @@ mod tests {
             body
         };
 
-        let _res_rx = tx.try_send(crate::Request::new(body)).unwrap();
+        let _res_rx = tx
+            .try_send((crate::Request::new(body), stats::next_request_id()))
+            .unwrap();
 
         // Ensure conn.write_body wasn't called with the empty chunk.
         // If it is, it will trigger an assertion.

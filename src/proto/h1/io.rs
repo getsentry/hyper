@@ -172,7 +172,7 @@ where
         record_time: bool,
         cx: &mut Context<'_>,
         parse_ctx: ParseContext<'_>,
-    ) -> Poll<crate::Result<(Option<std::time::Instant>, ParsedMessage<S::Incoming>)>>
+    ) -> Poll<crate::Result<ParsedMessage<S::Incoming>>>
     where
         S: Http1Transaction,
     {
@@ -197,7 +197,7 @@ where
                 Some(msg) => {
                     debug!("parsed {} headers", msg.head.headers.len());
                     self.partial_len = None;
-                    return Poll::Ready(Ok((fbt, msg)));
+                    return Poll::Ready(Ok(msg));
                 }
                 None => {
                     let max = self.read_buf_strategy.max();

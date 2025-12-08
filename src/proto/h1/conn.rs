@@ -242,7 +242,7 @@ where
             }
         }
 
-        let (fbt, msg) = match self.io.parse::<T>(
+        let msg = match self.io.parse::<T>(
             true,
             cx,
             ParseContext {

@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-use hyper::{server::conn::http1, service::service_fn};
+use hyper::{server::conn::http1, service::service_fn, stats};
 use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 
@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 });
 
-                let (_, res) = sender.send_request(req).await?;
+                let res = sender.send_request(req, stats::next_request_id()).await?;
                 Ok::<http::Response<hyper::body::Incoming>, hyper::Error>(res)
             }
         });

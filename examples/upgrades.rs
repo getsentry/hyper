@@ -4,6 +4,7 @@
 use std::net::SocketAddr;
 use std::str;
 
+use hyper::stats::next_request_id;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
@@ -113,7 +114,7 @@ async fn client_upgrade_request(addr: SocketAddr) -> Result<()> {
         }
     });
 
-    let res = sender.send_request(req).await?.1;
+    let res = sender.send_request(req, next_request_id()).await?;
 
     if res.status() != StatusCode::SWITCHING_PROTOCOLS {
         panic!("Our server didn't upgrade: {}", res.status());

@@ -6,7 +6,7 @@ use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
-use hyper::{Method, Request, Response};
+use hyper::{stats, Method, Request, Response};
 
 use tokio::net::{TcpListener, TcpStream};
 
@@ -106,7 +106,7 @@ async fn proxy(
             }
         });
 
-        let resp = sender.send_request(req).await?.1;
+        let resp = sender.send_request(req, stats::next_request_id()).await?;
         Ok(resp.map(|b| b.boxed()))
     }
 }

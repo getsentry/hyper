@@ -192,8 +192,7 @@ async fn http1_client(url: hyper::Uri) -> Result<(), Box<dyn std::error::Error>>
 
         let mut res = sender
             .send_request(req, hyper::stats::next_request_id())
-            .await?
-            .1;
+            .await?;
 
         let mut stdout = io::stdout();
         stdout
@@ -296,8 +295,7 @@ async fn http2_client(url: hyper::Uri) -> Result<(), Box<dyn std::error::Error>>
 
         let mut res = sender
             .send_request(req, hyper::stats::next_request_id())
-            .await?
-            .1;
+            .await?;
 
         let mut stdout = io::stdout();
         stdout
@@ -351,12 +349,6 @@ impl IOTypeNotSend {
             _marker: PhantomData,
             stream,
         }
-    }
-}
-
-impl hyper::rt::Stats for IOTypeNotSend {
-    fn stats(&mut self) -> Option<hyper::rt::ConnectionStats> {
-        None
     }
 }
 
